@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use BuyFrom\Tests\HttpServer;
+use Icecube\EdgeCache\Tests\Support\HttpServer;
 use Icecube\EdgeCache\Tests\Support\Catalogue;
 use Symfony\Contracts\HttpClient\ResponseInterface;
 

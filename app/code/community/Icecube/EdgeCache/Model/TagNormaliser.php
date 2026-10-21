@@ -58,7 +58,8 @@ final class Icecube_EdgeCache_Model_TagNormaliser
 
     /**
      * Keeps tags in the order they were collected (the page's own entity comes first)
-     * and swaps whatever does not fit for the coarse tag of its type.
+     * and swaps whatever does not fit for the coarse tag of its type. The limits must leave
+     * room for the coarse tags on their own, a few dozen bytes, which every real CDN does.
      *
      * @param list<string> $tags normalised
      * @return list<string>
@@ -89,28 +90,7 @@ final class Icecube_EdgeCache_Model_TagNormaliser
             }
         }
 
-        $capped = [...$kept, ...array_keys($overflowed)];
-
-        return $this->fits($capped, $limits) ? $capped : $this->truncate(array_keys($overflowed), $limits);
-    }
-
-    /**
-     * Only reached when the coarse tags alone are over the limits, which no real CDN limit allows.
-     *
-     * @param list<string> $tags
-     * @return list<string>
-     */
-    private function truncate(array $tags, Icecube_EdgeCache_Model_Adapter_Limits $limits): array
-    {
-        $kept = [];
-        foreach ($tags as $tag) {
-            if (!$this->fits([...$kept, $tag], $limits)) {
-                break;
-            }
-            $kept[] = $tag;
-        }
-
-        return $kept;
+        return [...$kept, ...array_keys($overflowed)];
     }
 
     /**

@@ -1,0 +1,157 @@
+<?php
+
+/**
+ * SPDX-FileCopyrightText: 2026 Icecube
+ * SPDX-License-Identifier: OSL-3.0
+ * @package Icecube_EdgeCache
+ */
+
+declare(strict_types=1);
+
+class Icecube_EdgeCache_Model_Observer
+{
+    #[Maho\Config\Observer('controller_action_predispatch_session_start', id: 'edgecache_prepare_session')]
+    public function prepareSession(\Maho\Event\Observer $observer): void
+    {
+        $action = $observer->getEvent()->getData('controller_action');
+        if ($action instanceof Mage_Core_Controller_Varien_Action) {
+            Mage::getSingleton('edgecache/policy')->prepareSession($action);
+        }
+    }
+
+    /**
+     * After ContentNegotiation and every other controller_front_send_response_before observer.
+     */
+    #[Maho\Config\Observer('http_response_send_before', id: 'edgecache_apply_policy')]
+    public function applyPolicy(\Maho\Event\Observer $observer): void
+    {
+        $response = $observer->getEvent()->getData('response');
+        if ($response instanceof Mage_Core_Controller_Response_Http) {
+            Mage::getSingleton('edgecache/policy')->applyToResponse($response);
+        }
+    }
+
+    /**
+     * Lets edgecache.js on a cached page tell whether this visitor has a session worth hydrating.
+     */
+    #[Maho\Config\Observer('session_before_renew_cookie', id: 'edgecache_set_marker_cookie')]
+    public function setMarkerCookie(\Maho\Event\Observer $observer): void
+    {
+        $event = $observer->getEvent();
+        $cookie = $event->getData('cookie');
+        if (!$cookie instanceof Mage_Core_Model_Cookie
+            || $event->getData('session_name') !== Mage_Core_Controller_Front_Action::SESSION_NAMESPACE
+            || !Mage::helper('edgecache')->isEnabled()
+        ) {
+            return;
+        }
+
+        $cookie->set(Icecube_EdgeCache_Helper_Data::MARKER_COOKIE, '1', null, null, null, null, false);
+    }
+
+    #[Maho\Config\Observer('model_load_after', id: 'edgecache_collect_model_tags')]
+    public function collectModelTags(\Maho\Event\Observer $observer): void
+    {
+        $model = $observer->getEvent()->getData('object');
+        if ($model instanceof Mage_Core_Model_Abstract && $this->isCollecting()) {
+            Mage::getSingleton('edgecache/tagCollector')->collectModel($model);
+        }
+    }
+
+    #[Maho\Config\Observer('catalog_product_collection_load_after', id: 'edgecache_collect_product_tags')]
+    #[Maho\Config\Observer('core_collection_abstract_load_after', id: 'edgecache_collect_collection_tags')]
+    public function collectCollectionTags(\Maho\Event\Observer $observer): void
+    {
+        $collection = $observer->getEvent()->getData('collection');
+        if ($collection instanceof Maho\Data\Collection && $this->isCollecting()) {
+            Mage::getSingleton('edgecache/tagCollector')->collectItems($collection);
+        }
+    }
+
+    /**
+     * EAV collections other than products fire no after-load event (blog posts, for one),
+     * so a page listing them is tagged with their type instead of each item.
+     */
+    #[Maho\Config\Observer('eav_collection_abstract_load_before', id: 'edgecache_collect_listing_tags')]
+    public function collectListingTags(\Maho\Event\Observer $observer): void
+    {
+        $collection = $observer->getEvent()->getData('collection');
+        if (!$collection instanceof Mage_Eav_Model_Entity_Collection_Abstract
+            || $collection instanceof Mage_Catalog_Model_Resource_Collection_Abstract
+            || !$this->isCollecting()
+        ) {
+            return;
+        }
+
+        $item = $collection->getNewEmptyItem();
+        if ($item instanceof Mage_Core_Model_Abstract) {
+            Mage::getSingleton('edgecache/tagCollector')->collectType($item);
+        }
+    }
+
+    #[Maho\Config\Observer('application_clean_cache', id: 'edgecache_purge_cleaned_tags')]
+    public function purgeCleanedTags(\Maho\Event\Observer $observer): void
+    {
+        $tags = $observer->getEvent()->getData('tags');
+        if (is_array($tags) && Mage::helper('edgecache')->isEnabled()) {
+            Mage::getSingleton('edgecache/purgeBuffer')->addCacheTags($tags);
+        }
+    }
+
+    /**
+     * Stock moves from orders skip cleanModelCache, but an item going in or out of stock changes the page.
+     */
+    #[Maho\Config\Observer('cataloginventory_stock_item_save_after', id: 'edgecache_purge_stock_change')]
+    public function purgeStockChange(\Maho\Event\Observer $observer): void
+    {
+        $item = $observer->getEvent()->getData('item');
+        if (!$item instanceof Mage_CatalogInventory_Model_Stock_Item
+            || !$item->dataHasChangedFor('is_in_stock')
+            || !Mage::helper('edgecache')->isEnabled()
+        ) {
+            return;
+        }
+
+        Mage::getSingleton('edgecache/purgeBuffer')->addCacheTags([Mage_Catalog_Model_Product::CACHE_TAG . '_' . (int) $item->getProductId()]);
+    }
+
+    #[Maho\Config\Observer('review_save_after', id: 'edgecache_purge_review_save')]
+    #[Maho\Config\Observer('review_delete_after', id: 'edgecache_purge_review_delete')]
+    public function purgeReviewedProduct(\Maho\Event\Observer $observer): void
+    {
+        $review = $observer->getEvent()->getData('object');
+        if (!$review instanceof Mage_Review_Model_Review || !Mage::helper('edgecache')->isEnabled()) {
+            return;
+        }
+
+        $productEntityId = $review->getEntityIdByCode(Mage_Review_Model_Review::ENTITY_PRODUCT_CODE);
+        if ((int) $review->getEntityId() === (int) $productEntityId) {
+            Mage::getSingleton('edgecache/purgeBuffer')->addCacheTags([Mage_Catalog_Model_Product::CACHE_TAG . '_' . (int) $review->getEntityPkValue()]);
+        }
+    }
+
+    /**
+     * Rule and currency changes touch prices on pages no tag points to.
+     */
+    #[Maho\Config\Observer('adminhtml_cache_flush_all', id: 'edgecache_purge_all_on_flush')]
+    #[Maho\Config\Observer('adminhtml_cache_flush_system', id: 'edgecache_purge_all_on_system_flush')]
+    #[Maho\Config\Observer('catalogrule_before_apply', id: 'edgecache_purge_all_on_rules')]
+    #[Maho\Config\Observer('directory_currency_rates_save_after', id: 'edgecache_purge_all_on_rates')]
+    public function purgeAll(\Maho\Event\Observer $observer): void
+    {
+        if (Mage::helper('edgecache')->isEnabled()) {
+            Mage::getSingleton('edgecache/purgeBuffer')->addAll();
+        }
+    }
+
+    #[Maho\Config\Observer('controller_front_send_response_after', id: 'edgecache_flush_purges')]
+    public function flushPurges(\Maho\Event\Observer $observer): void
+    {
+        Mage::getSingleton('edgecache/purgeBuffer')->flush();
+    }
+
+    private function isCollecting(): bool
+    {
+        return Mage::getSingleton('edgecache/policy')->isSessionless();
+    }
+}

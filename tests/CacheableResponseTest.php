@@ -1,0 +1,115 @@
+<?php
+
+declare(strict_types=1);
+
+use BuyFrom\Tests\HttpServer;
+use Icecube\EdgeCache\Tests\Support\Catalogue;
+use Symfony\Contracts\HttpClient\ResponseInterface;
+
+beforeEach(function (): void {
+    Catalogue::ensure();
+    HttpServer::start(['edgecache/general/enabled' => '1']);
+});
+
+/**
+ * @return list<string>
+ */
+function edgeHeader(ResponseInterface $response, string $name): array
+{
+    return $response->getHeaders(false)[strtolower($name)] ?? [];
+}
+
+/**
+ * A real key is 16 alphanumerics wherever core prints one: an input value, a JSON
+ * data-params blob (HTML-escaped) or a /form_key/ URL segment.
+ */
+function containsRealFormKey(string $body): bool
+{
+    return preg_match('#(form_key(&quot;:&quot;|/|"\s+value=")|formKey:\s*")(?!__EDGEFK__)[A-Za-z0-9]{16}#', $body) === 1;
+}
+
+it('serves an allowlisted page without a session, cacheable and tagged', function (string $path, string $tagType, string $idKey): void {
+    $ids = Catalogue::ensure();
+    $tag = $tagType . ($idKey === 'home'
+        ? (int) Mage::getModel('cms/page')->load('home', 'identifier')->getId()
+        : $ids[$idKey]);
+
+    $response = HttpServer::request('GET', $path);
+    $body = $response->getContent(false);
+
+    expect($response->getStatusCode())->toBe(200)
+        ->and(edgeHeader($response, 'Set-Cookie'))->toBe([])
+        ->and(edgeHeader($response, 'Cache-Control'))->toBe(['max-age=0, must-revalidate, public'])
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['max-age=86400, stale-while-revalidate=86400, stale-if-error=604800'])
+        ->and(explode(',', edgeHeader($response, 'X-Edge-Tags')[0] ?? ''))->toContain($tag)
+        ->and($body)->toContain(Icecube_EdgeCache_Helper_Data::FORM_KEY_SENTINEL)
+        ->and(containsRealFormKey($body))->toBeFalse();
+})->with([
+    'home' => ['/', 'cp', 'home'],
+    'CMS page' => ['/' . Catalogue::CMS_PAGE . '/', 'cp', 'page'],
+    'category' => ['/edgecache-category/', 'c', 'category'],
+    'product' => ['/edgecache-product/', 'p', 'product'],
+]);
+
+it('tags a category page with the products it lists', function (): void {
+    $ids = Catalogue::ensure();
+
+    $tags = explode(',', edgeHeader(HttpServer::request('GET', '/edgecache-category/'), 'X-Edge-Tags')[0] ?? '');
+
+    expect($tags)->toContain('c' . $ids['category'])->toContain('p' . $ids['product']);
+});
+
+it('gives search results and 404s the short TTL', function (string $path, int $status): void {
+    $response = HttpServer::request('GET', $path);
+
+    expect($response->getStatusCode())->toBe($status)
+        ->and(edgeHeader($response, 'Set-Cookie'))->toBe([])
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['max-age=300, stale-while-revalidate=300, stale-if-error=604800']);
+})->with([
+    'search' => ['/catalogsearch/result/?q=nothing-matches', 200],
+    '404' => ['/no-such-page/', 404],
+]);
+
+it('leaves the response private when the visitor has a session', function (): void {
+    $response = HttpServer::request('GET', '/edgecache-product/', ['Cookie' => 'maho_session=' . str_repeat('a', 32)]);
+
+    expect($response->getStatusCode())->toBe(200)
+        ->and(edgeHeader($response, 'Cache-Control')[0] ?? '')->toContain('private')
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store'])
+        ->and(edgeHeader($response, 'X-Edge-Tags'))->toBe([])
+        ->and($response->getContent(false))->not->toContain(Icecube_EdgeCache_Helper_Data::FORM_KEY_SENTINEL);
+});
+
+it('never marks a POST cacheable', function (string $path): void {
+    $response = HttpServer::request('POST', $path, body: ['q' => 'x']);
+
+    expect(edgeHeader($response, 'Cache-Control')[0] ?? '')->not->toContain('public')
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->not->toContain('max-age')
+        ->and(edgeHeader($response, 'X-Edge-Tags'))->toBe([]);
+})->with(['/', '/edgecache-product/', '/catalogsearch/result/']);
+
+it('starts a session as usual on a page that is not allowlisted', function (): void {
+    $response = HttpServer::request('GET', '/customer/account/login/');
+    $cookies = implode("\n", edgeHeader($response, 'Set-Cookie'));
+
+    expect($response->getStatusCode())->toBe(200)
+        ->and(edgeHeader($response, 'Cache-Control')[0] ?? '')->toContain('private')
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store'])
+        ->and($cookies)->toContain('maho_session=')
+        ->and($cookies)->toMatch('/edgecache_s=1;(?!.*HttpOnly)/i');
+});
+
+it('takes Accept out of Vary on cacheable HTML', function (): void {
+    $vary = implode(',', edgeHeader(HttpServer::request('GET', '/edgecache-product/'), 'Vary'));
+
+    expect($vary)->not->toContain('Accept');
+});
+
+it('keeps markdown negotiated on the HTML URL out of shared caches', function (): void {
+    $response = HttpServer::request('GET', '/edgecache-product/', ['Accept' => 'text/markdown']);
+
+    expect(edgeHeader($response, 'Content-Type')[0] ?? '')->toStartWith('text/markdown')
+        ->and(edgeHeader($response, 'Cache-Control'))->toBe(['no-store, private'])
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store'])
+        ->and(edgeHeader($response, 'Set-Cookie'))->toBe([]);
+});

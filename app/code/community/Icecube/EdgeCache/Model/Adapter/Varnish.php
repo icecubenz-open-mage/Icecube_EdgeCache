@@ -43,12 +43,13 @@ class Icecube_EdgeCache_Model_Adapter_Varnish extends Icecube_EdgeCache_Model_Ad
     }
 
     /**
-     * The sample VCL passes anything private or carrying Set-Cookie, which every uncacheable response is.
+     * Core sends a 301 as max-age=86400 with no cookie, and a VCL that falls back to
+     * Cache-Control would keep it with no tag to purge it by.
      */
     #[\Override]
     public function getUncacheableHeaders(): array
     {
-        return [];
+        return [self::TTL_HEADER => 'no-store'];
     }
 
     #[\Override]

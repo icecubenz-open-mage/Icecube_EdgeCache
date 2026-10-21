@@ -93,6 +93,11 @@ it('emits CDN-Cache-Control and Cache-Tag, or the Cloudflare-only TTL header whe
     expect($adapter->getUncacheableHeaders())->toBe(['Cloudflare-CDN-Cache-Control' => 'no-store']);
 });
 
+it('tells Varnish not to store an uncacheable response', function (): void {
+    // Core gives a 301 max-age=86400 with no Set-Cookie, and an untagged 301 could never be purged.
+    expect(Mage::getModel('edgecache/adapter_varnish')->getUncacheableHeaders())->toBe(['CDN-Cache-Control' => 'no-store']);
+});
+
 it('purges every Varnish node by xkey', function (): void {
     currentStore()->setConfig(Varnish::XML_PATH_NODES, "http://10.0.0.5:6081\nhttp://10.0.0.6:6081/");
     currentStore()->setConfig(Varnish::XML_PATH_SOFT_PURGE, '1');

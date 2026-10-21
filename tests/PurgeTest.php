@@ -9,6 +9,8 @@ use Maho\Queue\QueueManager;
 use Symfony\Component\Messenger\Envelope;
 
 beforeEach(function (): void {
+    // Before enabling, so creating the fixtures on a fresh install buffers no purges.
+    Catalogue::ensure();
     currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '1');
     RecordingAdapter::install();
     deleteQueuedPurges();

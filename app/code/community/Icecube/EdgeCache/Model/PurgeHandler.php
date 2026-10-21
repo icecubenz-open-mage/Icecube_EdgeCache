@@ -37,7 +37,8 @@ class Icecube_EdgeCache_Model_PurgeHandler
             $adapter->purgeTags($batch['tags']);
         } catch (Throwable $e) {
             Mage::logException($e);
-            $this->retry($batch['tags'], $batch['attempt'], $batch['ids']);
+            $retryAfter = $e instanceof Icecube_EdgeCache_Model_Adapter_RateLimitedException ? $e->retryAfter : 0;
+            $this->retry($batch['tags'], $batch['attempt'], $batch['ids'], $retryAfter);
 
             return;
         }
@@ -58,7 +59,7 @@ class Icecube_EdgeCache_Model_PurgeHandler
      * @param list<string> $tags
      * @param list<int> $claimedIds
      */
-    private function retry(array $tags, int $attempt, array $claimedIds): void
+    private function retry(array $tags, int $attempt, array $claimedIds, int $retryAfter): void
     {
         try {
             if ($attempt >= self::MAX_ATTEMPTS) {
@@ -66,7 +67,7 @@ class Icecube_EdgeCache_Model_PurgeHandler
             } else {
                 \Maho\Queue\QueueManager::dispatch(
                     new Icecube_EdgeCache_Model_PurgeTagsMessage($tags, $attempt + 1),
-                    self::RETRY_DELAY * 4 ** ($attempt - 1),
+                    max(self::RETRY_DELAY * 4 ** ($attempt - 1), $retryAfter),
                     Icecube_EdgeCache_Model_PurgeBuffer::QUEUE,
                 );
             }

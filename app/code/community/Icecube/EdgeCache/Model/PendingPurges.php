@@ -34,8 +34,9 @@ class Icecube_EdgeCache_Model_PendingPurges
     /**
      * Claims waiting tag purges, oldest first, while their tags still fit in one call.
      *
-     * Rows that aren't due yet count too: the dispatch delay exists to batch, and purging
-     * early is harmless.
+     * Fresh rows that aren't due yet count too: the dispatch delay exists to batch, and
+     * purging early is harmless. A retry that isn't due is left alone, or a run of 429s
+     * would retry on every new save and escalate to a purge-all within the minute.
      *
      * @param list<string> $tags the tags already going into the call
      * @return array{tags: list<string>, ids: list<int>, attempt: int}
@@ -45,7 +46,7 @@ class Icecube_EdgeCache_Model_PendingPurges
         $merged = array_fill_keys($tags, true);
         $ids = [];
         $rows = $this->getConnection()->fetchAll(
-            $this->selectPending(Icecube_EdgeCache_Model_PurgeTagsMessage::class, ['message_id', 'body'])
+            $this->selectPending(Icecube_EdgeCache_Model_PurgeTagsMessage::class, ['message_id', 'body', 'available_at'])
                 ->order('message_id ASC')
                 ->limit(self::MERGE_SCAN_LIMIT),
         );
@@ -54,7 +55,7 @@ class Icecube_EdgeCache_Model_PendingPurges
                 continue;
             }
             $message = $this->decode($row['body']);
-            if ($message === null) {
+            if ($message === null || $this->isBackingOff($message, $row['available_at'] ?? null)) {
                 continue;
             }
             $candidate = $merged + array_fill_keys($message->tags, true);
@@ -121,6 +122,11 @@ class Icecube_EdgeCache_Model_PendingPurges
             'message_class = ?' => Icecube_EdgeCache_Model_PurgeTagsMessage::class,
             'message_id <= ?' => $lastId,
         ]);
+    }
+
+    private function isBackingOff(Icecube_EdgeCache_Model_PurgeTagsMessage $message, mixed $availableAt): bool
+    {
+        return $message->attempt > 1 && is_string($availableAt) && $availableAt > Mage_Core_Model_Locale::nowUtc();
     }
 
     private function claim(int $id): bool

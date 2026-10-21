@@ -6,6 +6,7 @@ namespace Icecube\EdgeCache\Tests\Support;
 
 use Icecube_EdgeCache_Model_Adapter_AdapterInterface;
 use Icecube_EdgeCache_Model_Adapter_Limits;
+use Icecube_EdgeCache_Model_Adapter_RateLimitedException;
 use Icecube_EdgeCache_Model_Ttl;
 use Mage;
 use RuntimeException;
@@ -23,6 +24,9 @@ final class RecordingAdapter implements Icecube_EdgeCache_Model_Adapter_AdapterI
     /** Makes every purge fail the way an unreachable or rate-limited CDN does */
     public static bool $failing = false;
 
+    /** With $failing, fails the way a 429 carrying Retry-After does */
+    public static ?int $retryAfter = null;
+
     /**
      * Registers the adapter the way a third-party module would, then selects it for the current store.
      */
@@ -30,6 +34,7 @@ final class RecordingAdapter implements Icecube_EdgeCache_Model_Adapter_AdapterI
     {
         self::$calls = [];
         self::$failing = false;
+        self::$retryAfter = null;
         Mage::app()->getConfig()->setNode('global/edgecache/adapters/' . self::CODE . '/class', self::class);
         Mage::app()->getStore()?->setConfig('edgecache/general/adapter', self::CODE);
     }
@@ -74,6 +79,9 @@ final class RecordingAdapter implements Icecube_EdgeCache_Model_Adapter_AdapterI
 
     private static function failIfFailing(): void
     {
+        if (self::$failing && self::$retryAfter !== null) {
+            throw new Icecube_EdgeCache_Model_Adapter_RateLimitedException('CDN rate limit', self::$retryAfter);
+        }
         if (self::$failing) {
             throw new RuntimeException('CDN rate limit');
         }

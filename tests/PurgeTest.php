@@ -224,6 +224,31 @@ it('requeues a failed purge with a backoff instead of throwing', function (): vo
         ->and(queuedPurges(Maho\Queue\Transport\DbTransport::STATUS_FAILED))->toBe([]);
 });
 
+it('leaves a retry alone until it is due, so new purges do not cut its backoff short', function (): void {
+    QueueManager::dispatch(new Icecube_EdgeCache_Model_PurgeTagsMessage(['p2'], 2), 3600, Icecube_EdgeCache_Model_PurgeBuffer::QUEUE);
+    QueueManager::dispatch(new Icecube_EdgeCache_Model_PurgeTagsMessage(['p1']), queue: Icecube_EdgeCache_Model_PurgeBuffer::QUEUE);
+
+    work();
+
+    expect(RecordingAdapter::$calls)->toBe([['purgeTags', ['p1']]])
+        ->and(pendingPurges())->toEqual([new Icecube_EdgeCache_Model_PurgeTagsMessage(['p2'], 2)]);
+});
+
+it('waits as long as the CDN asks before retrying', function (): void {
+    RecordingAdapter::$failing = true;
+    RecordingAdapter::$retryAfter = 900;
+    QueueManager::dispatch(new Icecube_EdgeCache_Model_PurgeTagsMessage(['p1']), queue: Icecube_EdgeCache_Model_PurgeBuffer::QUEUE);
+
+    work();
+
+    $availableAt = queueConnection()->fetchOne(
+        queueConnection()->select()->from(queueTable(), 'available_at')
+            ->where('queue = ?', Icecube_EdgeCache_Model_PurgeBuffer::QUEUE)
+            ->where('status = ?', Maho\Queue\Transport\DbTransport::STATUS_PENDING),
+    );
+    expect(is_string($availableAt) ? strtotime($availableAt . ' UTC') : false)->toBeGreaterThan(time() + 800);
+});
+
 it('purges everything once a purge has failed too often', function (): void {
     RecordingAdapter::$failing = true;
     QueueManager::dispatch(

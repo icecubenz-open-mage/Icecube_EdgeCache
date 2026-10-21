@@ -36,9 +36,34 @@ abstract class Icecube_EdgeCache_Model_Adapter_AbstractHttp implements Icecube_E
     protected function assertSuccessful(ResponseInterface $response, string $operation): void
     {
         $status = $response->getStatusCode();
-        if ($status < 200 || $status >= 300) {
-            throw new RuntimeException(sprintf('%s failed with HTTP %d: %s', $operation, $status, substr($response->getContent(false), 0, 500)));
+        if ($status >= 200 && $status < 300) {
+            return;
         }
+
+        $message = sprintf('%s failed with HTTP %d: %s', $operation, $status, substr($response->getContent(false), 0, 500));
+        $retryAfter = $status === 429 ? $this->getRetryAfter($response) : null;
+        if ($retryAfter !== null) {
+            throw new Icecube_EdgeCache_Model_Adapter_RateLimitedException($message, $retryAfter);
+        }
+
+        throw new RuntimeException($message);
+    }
+
+    /**
+     * Seconds from a Retry-After header, which may also be an HTTP date.
+     */
+    private function getRetryAfter(ResponseInterface $response): ?int
+    {
+        $value = trim($response->getHeaders(false)['retry-after'][0] ?? '');
+        if ($value === '') {
+            return null;
+        }
+        if (ctype_digit($value)) {
+            return (int) $value;
+        }
+        $time = strtotime($value);
+
+        return $time === false ? null : max(0, $time - time());
     }
 
     protected function getConfig(string $path): string

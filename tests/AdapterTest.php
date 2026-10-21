@@ -11,10 +11,11 @@ use Symfony\Component\HttpClient\Response\MockResponse;
  * Collects each request the adapter makes and answers it with the given body and status.
  *
  * @param list<array{method: string, url: string, headers: list<string>, body: string}> $requests
+ * @param list<string> $responseHeaders
  */
-function recordingClient(array &$requests, string $body = '{"success":true,"errors":[],"messages":[],"result":{"id":"x"}}', int $status = 200): MockHttpClient
+function recordingClient(array &$requests, string $body = '{"success":true,"errors":[],"messages":[],"result":{"id":"x"}}', int $status = 200, array $responseHeaders = []): MockHttpClient
 {
-    return new MockHttpClient(function (string $method, string $url, array $options) use (&$requests, $body, $status): MockResponse {
+    return new MockHttpClient(function (string $method, string $url, array $options) use (&$requests, $body, $status, $responseHeaders): MockResponse {
         $headers = $options['headers'] ?? [];
         $requests[] = [
             'method' => $method,
@@ -23,7 +24,7 @@ function recordingClient(array &$requests, string $body = '{"success":true,"erro
             'body' => is_string($options['body'] ?? null) ? $options['body'] : '',
         ];
 
-        return new MockResponse($body, ['http_code' => $status]);
+        return new MockResponse($body, ['http_code' => $status, 'response_headers' => $responseHeaders]);
     });
 }
 
@@ -73,6 +74,22 @@ it('throws on a rate limited or refused Cloudflare purge so the queue retries it
     'server error' => [502, 'Bad gateway'],
     'not accepted' => [200, '{"success":false,"errors":[{"code":1012,"message":"Request must contain one of purge_everything, files, tags"}]}'],
 ])->throws(RuntimeException::class);
+
+it('passes on how long Cloudflare asks to wait after a 429', function (): void {
+    configureCloudflare();
+    $requests = [];
+
+    try {
+        Mage::getModel('edgecache/adapter_cloudflare')
+            ->setHttpClient(recordingClient($requests, '{"success":false}', 429, ['Retry-After: 120']))
+            ->purgeTags(['p1']);
+        $retryAfter = null;
+    } catch (Icecube_EdgeCache_Model_Adapter_RateLimitedException $e) {
+        $retryAfter = $e->retryAfter;
+    }
+
+    expect($retryAfter)->toBe(120);
+});
 
 it('refuses to purge Cloudflare without credentials', function (): void {
     $requests = [];

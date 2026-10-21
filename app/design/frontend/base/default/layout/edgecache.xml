@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<!--
+SPDX-FileCopyrightText: 2026 Icecube
+SPDX-License-Identifier: OSL-3.0
+-->
+<layout version="0.1.0">
+    <default>
+        <reference name="head">
+            <action method="addItem" ifconfig="edgecache/general/enabled"><type>skin_js</type><name>js/edgecache.js</name></action>
+        </reference>
+        <reference name="before_body_end">
+            <block type="edgecache/config" name="edgecache.config"/>
+        </reference>
+    </default>
+</layout>

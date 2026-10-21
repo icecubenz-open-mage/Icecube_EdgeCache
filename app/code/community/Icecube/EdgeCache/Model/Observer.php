@@ -129,7 +129,35 @@ class Icecube_EdgeCache_Model_Observer
             return;
         }
 
-        Mage::getSingleton('edgecache/purgeBuffer')->addCacheTags([Mage_Catalog_Model_Product::CACHE_TAG . '_' . (int) $item->getProductId()]);
+        // The categories too: a listing hides or shows the product as it goes in or out of stock.
+        $product = Mage::getModel('catalog/product')->setId((int) $item->getProductId());
+        $tags = [Mage_Catalog_Model_Product::CACHE_TAG . '_' . (int) $product->getId()];
+        foreach (Mage::getResourceSingleton('catalog/product')->getCategoryIdsWithAnchors($product) as $categoryId) {
+            if (is_numeric($categoryId)) {
+                $tags[] = Mage_Catalog_Model_Category::CACHE_TAG . '_' . (int) $categoryId;
+            }
+        }
+        Mage::getSingleton('edgecache/purgeBuffer')->addCacheTags($tags);
+    }
+
+    /**
+     * Imports write straight to the tables and clean no cache tags.
+     */
+    #[Maho\Config\Observer('catalog_product_import_finish_before', id: 'edgecache_purge_imported_products')]
+    public function purgeImportedProducts(\Maho\Event\Observer $observer): void
+    {
+        $adapter = $observer->getEvent()->getData('adapter');
+        if (!$adapter instanceof Mage_ImportExport_Model_Import_Entity_Product || !Mage::helper('edgecache')->isEnabledForAnyStore()) {
+            return;
+        }
+
+        $tags = [Mage_Catalog_Model_Product::CACHE_TAG];
+        foreach ($adapter->getAffectedEntityIds() as $productId) {
+            if (is_numeric($productId)) {
+                $tags[] = Mage_Catalog_Model_Product::CACHE_TAG . '_' . (int) $productId;
+            }
+        }
+        Mage::getSingleton('edgecache/purgeBuffer')->addCacheTags($tags);
     }
 
     #[Maho\Config\Observer('review_save_after', id: 'edgecache_purge_review_save')]
@@ -148,8 +176,10 @@ class Icecube_EdgeCache_Model_Observer
     }
 
     /**
-     * Rule and currency changes touch prices on pages no tag points to.
+     * Rule, currency and store config changes touch pages no tag points to: prices, the header
+     * and footer, contact details. Config saves clean only Maho's config and layout tags.
      */
+    #[Maho\Config\Observer('admin_system_config_section_save_after', id: 'edgecache_purge_all_on_config')]
     #[Maho\Config\Observer('adminhtml_cache_flush_all', id: 'edgecache_purge_all_on_flush')]
     #[Maho\Config\Observer('adminhtml_cache_flush_system', id: 'edgecache_purge_all_on_system_flush')]
     #[Maho\Config\Observer('catalogrule_before_apply', id: 'edgecache_purge_all_on_rules')]

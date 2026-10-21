@@ -142,6 +142,67 @@ it('ignores cache cleans that carry no edge tags', function (): void {
     expect(Mage::getSingleton('edgecache/purgeBuffer')->getTags())->toBe([]);
 });
 
+it('purges the product and the categories listing it when it goes out of stock', function (): void {
+    $ids = Catalogue::ensure();
+    $stockItem = Mage::getModel('cataloginventory/stock_item')->loadByProduct($ids['product']);
+
+    try {
+        $stockItem->setQty(0)->save();
+
+        expect(Mage::getSingleton('edgecache/purgeBuffer')->getTags())->toBe(['p' . $ids['product'], 'c' . $ids['category']]);
+    } finally {
+        $stockItem->setQty(100)->setIsInStock(1)->save();
+    }
+});
+
+it('does not purge a stock save that leaves the product in stock', function (): void {
+    $ids = Catalogue::ensure();
+
+    Mage::getModel('cataloginventory/stock_item')->loadByProduct($ids['product'])->setQty(99)->save();
+
+    expect(Mage::getSingleton('edgecache/purgeBuffer')->getTags())->toBe([]);
+});
+
+it('purges the reviewed product', function (): void {
+    $ids = Catalogue::ensure();
+    $review = Mage::getModel('review/review');
+
+    $review->setEntityId((int) $review->getEntityIdByCode(Mage_Review_Model_Review::ENTITY_PRODUCT_CODE))
+        ->setEntityPkValue($ids['product'])
+        ->setStatusId(Mage_Review_Model_Review::STATUS_APPROVED)
+        ->setTitle('Edge')
+        ->setDetail('Cached')
+        ->setNickname('Tester')
+        ->setStoreId(1)
+        ->setStores([1])
+        ->save();
+
+    expect(Mage::getSingleton('edgecache/purgeBuffer')->getTags())->toContain('p' . $ids['product']);
+});
+
+it('purges everything when catalogue rules are applied or store config is saved', function (string $event): void {
+    Mage::dispatchEvent($event);
+
+    expect(Mage::getSingleton('edgecache/purgeBuffer')->isPurgingAll())->toBeTrue();
+})->with(['catalogrule_before_apply', 'admin_system_config_section_save_after']);
+
+it('purges the products an import touched', function (): void {
+    $adapter = new class extends Mage_ImportExport_Model_Import_Entity_Product {
+        public function __construct() {}
+
+        /** @return list<int|string> */
+        #[\Override]
+        public function getAffectedEntityIds(): array
+        {
+            return [3, '4'];
+        }
+    };
+
+    Mage::dispatchEvent('catalog_product_import_finish_before', ['adapter' => $adapter]);
+
+    expect(Mage::getSingleton('edgecache/purgeBuffer')->getTags())->toBe(['p_all', 'p3', 'p4']);
+});
+
 it('purges from admin when only a store view has the module enabled', function (): void {
     Mage::app()->getStore(0)?->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '0');
     Mage::app()->setCurrentStore('admin');

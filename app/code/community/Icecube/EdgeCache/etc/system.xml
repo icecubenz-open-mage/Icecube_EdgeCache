@@ -50,6 +50,15 @@ SPDX-License-Identifier: OSL-3.0
                             <show_in_website>1</show_in_website>
                             <show_in_store>1</show_in_store>
                         </cacheable_actions>
+                        <bypass_cookies translate="label comment">
+                            <label>Bypass Cookies</label>
+                            <comment>Cookie names, one per line. A request carrying any of them renders with a session and is never cached, because the cookie can change the page. Session cookies always count. Configure the CDN to bypass the cache on the same list.</comment>
+                            <frontend_type>textarea</frontend_type>
+                            <sort_order>35</sort_order>
+                            <show_in_default>1</show_in_default>
+                            <show_in_website>1</show_in_website>
+                            <show_in_store>1</show_in_store>
+                        </bypass_cookies>
                         <ttl translate="label comment">
                             <label>Edge TTL</label>
                             <comment>Seconds. Browsers always revalidate.</comment>

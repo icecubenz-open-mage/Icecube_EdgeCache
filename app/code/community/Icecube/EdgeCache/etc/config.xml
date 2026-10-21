@@ -72,6 +72,11 @@ blog_index_category
 blog_index_view
 catalogsearch_result_index
 cms_index_noRoute</cacheable_actions>
+                <!-- store switches the store view, user_allowed_save_cookie decides whether trackers
+                    and the cookie notice render, maho_a11y_scan turns on template hints. -->
+                <bypass_cookies>store
+user_allowed_save_cookie
+maho_a11y_scan</bypass_cookies>
                 <short_ttl_actions>catalogsearch_result_index
 cms_index_noRoute</short_ttl_actions>
                 <ttl>86400</ttl>

@@ -219,25 +219,18 @@ class Icecube_EdgeCache_Model_Policy
         }
 
         $request = $action->getRequest();
-        if (!in_array($request->getMethod(), ['GET', 'HEAD'], true) || $this->hasSessionCookie()) {
+        if (!in_array($request->getMethod(), ['GET', 'HEAD'], true) || $this->hasBypassCookie()) {
             return false;
         }
 
         return $helper->isCacheableAction($action->getFullActionName());
     }
 
-    /**
-     * Legacy names count too: the session migrates them to the current one on start.
-     */
-    private function hasSessionCookie(): bool
+    private function hasBypassCookie(): bool
     {
         $cookie = Mage::getSingleton('core/cookie');
-        $names = [
-            Mage_Core_Controller_Front_Action::SESSION_NAMESPACE,
-            ...Mage_Core_Controller_Front_Action::SESSION_LEGACY_NAMESPACES,
-        ];
 
-        return array_any($names, function (string $name) use ($cookie): bool {
+        return array_any(Mage::helper('edgecache')->getBypassCookies(), function (string $name) use ($cookie): bool {
             $value = $cookie->get($name);
 
             return is_string($value) && $value !== '';

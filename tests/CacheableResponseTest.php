@@ -70,15 +70,22 @@ it('gives search results and 404s the short TTL', function (string $path, int $s
     '404' => ['/no-such-page/', 404],
 ]);
 
-it('leaves the response private when the visitor has a session', function (): void {
-    $response = HttpServer::request('GET', '/edgecache-product/', ['Cookie' => 'maho_session=' . str_repeat('a', 32)]);
+it('leaves the response private when a request cookie can change the page', function (string $cookie): void {
+    $response = HttpServer::request('GET', '/edgecache-product/', ['Cookie' => $cookie]);
 
     expect($response->getStatusCode())->toBe(200)
         ->and(edgeHeader($response, 'Cache-Control')[0] ?? '')->toContain('private')
         ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store'])
         ->and(edgeHeader($response, 'X-Edge-Tags'))->toBe([])
         ->and($response->getContent(false))->not->toContain(Icecube_EdgeCache_Helper_Data::FORM_KEY_SENTINEL);
-});
+})->with([
+    'session' => 'maho_session=' . str_repeat('a', 32),
+    'legacy session' => 'frontend=' . str_repeat('a', 32),
+    'older legacy session' => 'om_frontend=' . str_repeat('a', 32),
+    'store view switch' => 'store=default',
+    'cookie consent' => 'user_allowed_save_cookie=' . rawurlencode('{"1":1}'),
+    'accessibility scan' => 'maho_a11y_scan=' . str_repeat('a', 32),
+]);
 
 it('never marks a POST cacheable', function (string $path): void {
     $response = HttpServer::request('POST', $path, body: ['q' => 'x']);

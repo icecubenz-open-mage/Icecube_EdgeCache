@@ -15,6 +15,7 @@ class Icecube_EdgeCache_Helper_Data extends Mage_Core_Helper_Abstract
     public const XML_PATH_ENABLED = 'edgecache/general/enabled';
     public const XML_PATH_ADAPTER = 'edgecache/general/adapter';
     public const XML_PATH_CACHEABLE_ACTIONS = 'edgecache/general/cacheable_actions';
+    public const XML_PATH_BYPASS_COOKIES = 'edgecache/general/bypass_cookies';
     public const XML_PATH_SHORT_TTL_ACTIONS = 'edgecache/general/short_ttl_actions';
     public const XML_PATH_TTL = 'edgecache/general/ttl';
     public const XML_PATH_STALE_WHILE_REVALIDATE = 'edgecache/general/stale_while_revalidate';
@@ -59,6 +60,22 @@ class Icecube_EdgeCache_Helper_Data extends Mage_Core_Helper_Abstract
     public function isCacheableAction(string $fullActionName): bool
     {
         return in_array($fullActionName, $this->getList(self::XML_PATH_CACHEABLE_ACTIONS), true);
+    }
+
+    /**
+     * Every cookie whose presence means the page may differ from the shared copy. The session
+     * cookies are always in it (legacy names too, since the session migrates them on start),
+     * so clearing the setting can't make sessions cacheable.
+     *
+     * @return list<string>
+     */
+    public function getBypassCookies(): array
+    {
+        return array_values(array_unique([
+            Mage_Core_Controller_Front_Action::SESSION_NAMESPACE,
+            ...Mage_Core_Controller_Front_Action::SESSION_LEGACY_NAMESPACES,
+            ...$this->getList(self::XML_PATH_BYPASS_COOKIES),
+        ]));
     }
 
     public function getTtl(string $fullActionName): Icecube_EdgeCache_Model_Ttl

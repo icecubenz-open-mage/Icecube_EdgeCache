@@ -22,6 +22,7 @@ class Icecube_EdgeCache_Helper_Data extends Mage_Core_Helper_Abstract
     public const XML_PATH_STALE_IF_ERROR = 'edgecache/general/stale_if_error';
     public const XML_PATH_SHORT_TTL = 'edgecache/general/short_ttl';
     public const XML_PATH_TAG_PREFIX = 'edgecache/general/tag_prefix';
+    public const XML_PATH_PURGE_DELAY = 'edgecache/general/purge_delay';
     public const XML_PATH_ADAPTERS = 'global/edgecache/adapters';
 
     /** Stands in for the per-visitor form key in shared HTML until edgecache.js swaps it */
@@ -108,6 +109,14 @@ class Icecube_EdgeCache_Helper_Data extends Mage_Core_Helper_Abstract
         $ttl = $this->getInt(self::XML_PATH_SHORT_TTL);
 
         return new Icecube_EdgeCache_Model_Ttl($ttl, $ttl, $this->getInt(self::XML_PATH_STALE_IF_ERROR));
+    }
+
+    /**
+     * Seconds a tag purge waits in the queue, so the purges from a burst of saves merge into one call.
+     */
+    public function getPurgeDelay(): int
+    {
+        return max(0, $this->getInt(self::XML_PATH_PURGE_DELAY));
     }
 
     public function getTagPrefix(): string

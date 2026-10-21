@@ -75,14 +75,7 @@ class Icecube_EdgeCache_Model_PurgeBuffer
     public function flush(): void
     {
         if ($this->all) {
-            if (!Mage::getSingleton('edgecache/pendingPurges')->hasPurgeAll()) {
-                // The key is recorded, not enforced: Maho's check would also count a claimed row.
-                \Maho\Queue\QueueManager::dispatch(
-                    new Icecube_EdgeCache_Model_PurgeAllMessage(),
-                    queue: self::QUEUE,
-                    stamps: [new \Maho\Queue\Stamp\DedupeKeyStamp(self::PURGE_ALL_DEDUPE_KEY, enforce: false)],
-                );
-            }
+            $this->queuePurgeAll();
             $this->all = false;
             $this->tags = [];
             return;
@@ -92,12 +85,29 @@ class Icecube_EdgeCache_Model_PurgeBuffer
         }
 
         $chunkSize = max(1, Mage::helper('edgecache')->getAdapter()->getLimits()->tagsPerPurge);
+        $delay = Mage::helper('edgecache')->getPurgeDelay();
         foreach (array_chunk($this->getTags(), $chunkSize) as $chunk) {
-            \Maho\Queue\QueueManager::dispatch(new Icecube_EdgeCache_Model_PurgeTagsMessage($chunk), queue: self::QUEUE);
+            \Maho\Queue\QueueManager::dispatch(new Icecube_EdgeCache_Model_PurgeTagsMessage($chunk), $delay, self::QUEUE);
             foreach ($chunk as $tag) {
                 unset($this->tags[$tag]);
             }
         }
+    }
+
+    /**
+     * Queues a purge-all unless one is already waiting.
+     */
+    public function queuePurgeAll(): void
+    {
+        if (Mage::getSingleton('edgecache/pendingPurges')->hasPurgeAll()) {
+            return;
+        }
+        // The key is recorded, not enforced: Maho's check would also count a claimed row.
+        \Maho\Queue\QueueManager::dispatch(
+            new Icecube_EdgeCache_Model_PurgeAllMessage(),
+            queue: self::QUEUE,
+            stamps: [new \Maho\Queue\Stamp\DedupeKeyStamp(self::PURGE_ALL_DEDUPE_KEY, enforce: false)],
+        );
     }
 
     /**

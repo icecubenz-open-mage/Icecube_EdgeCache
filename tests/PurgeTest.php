@@ -12,6 +12,7 @@ beforeEach(function (): void {
     // Before enabling, so creating the fixtures on a fresh install buffers no purges.
     Catalogue::ensure();
     currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '1');
+    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_PURGE_DELAY, '0');
     RecordingAdapter::install();
     deleteQueuedPurges();
     // As a storefront or admin request does, so the buffer holds purges until the response is sent.
@@ -48,15 +49,17 @@ function deleteQueuedPurges(): void
  *
  * @return list<Envelope>
  */
-function queuedPurges(): array
+function queuedPurges(?string $status = null): array
 {
     $connection = queueConnection();
-    $rows = $connection->fetchAll(
-        $connection->select()
-            ->from(queueTable(), ['message_class', 'body'])
-            ->where('queue = ?', Icecube_EdgeCache_Model_PurgeBuffer::QUEUE)
-            ->order('message_id ASC'),
-    );
+    $select = $connection->select()
+        ->from(queueTable(), ['message_class', 'body'])
+        ->where('queue = ?', Icecube_EdgeCache_Model_PurgeBuffer::QUEUE)
+        ->order('message_id ASC');
+    if ($status !== null) {
+        $select->where('status = ?', $status);
+    }
+    $rows = $connection->fetchAll($select);
 
     $envelopes = [];
     foreach ($rows as $row) {
@@ -70,6 +73,28 @@ function queuedPurges(): array
     }
 
     return $envelopes;
+}
+
+/**
+ * Claims, handles and acks every due edgecache message, as a worker does.
+ */
+function work(): void
+{
+    $transport = QueueManager::dbTransport();
+    while (($envelopes = [...$transport->getFromQueues([Icecube_EdgeCache_Model_PurgeBuffer::QUEUE])]) !== []) {
+        foreach ($envelopes as $envelope) {
+            handle($envelope);
+            $transport->ack($envelope);
+        }
+    }
+}
+
+/**
+ * @return list<object>
+ */
+function pendingPurges(): array
+{
+    return array_map(fn(Envelope $envelope): object => $envelope->getMessage(), queuedPurges(Maho\Queue\Transport\DbTransport::STATUS_PENDING));
 }
 
 /**
@@ -113,9 +138,7 @@ it('hands each queued purge to the configured adapter', function (): void {
     Mage::getSingleton('edgecache/purgeBuffer')->addCacheTags(['catalog_product', 'catalog_product_7', 'cms_page_3']);
     Mage::getSingleton('edgecache/purgeBuffer')->flush();
 
-    foreach (queuedPurges() as $envelope) {
-        handle($envelope);
-    }
+    work();
 
     expect(RecordingAdapter::$calls)->toBe([
         ['purgeTags', ['p_all', 'p7']],
@@ -150,17 +173,82 @@ it('queues a purge straight away outside a web request', function (): void {
 
 it('keeps purges it could not queue, without throwing after the response', function (): void {
     Mage::getSingleton('edgecache/purgeBuffer')->addCacheTags(['catalog_product_7']);
-    RecordingAdapter::$failing = true;
+    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ADAPTER, 'unregistered');
 
     Mage::dispatchEvent('controller_front_send_response_after');
 
     expect(Mage::getSingleton('edgecache/purgeBuffer')->getTags())->toBe(['p7'])
         ->and(queuedPurges())->toBe([]);
 
-    RecordingAdapter::$failing = false;
+    RecordingAdapter::install();
     Mage::getSingleton('edgecache/purgeBuffer')->flush();
 
     expect(queuedPurges())->toHaveCount(1);
+});
+
+it('holds queued purges back so a burst of saves shares one call', function (): void {
+    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_PURGE_DELAY, '30');
+
+    Mage::getSingleton('edgecache/purgeBuffer')->addCacheTags(['catalog_product_7']);
+    Mage::getSingleton('edgecache/purgeBuffer')->flush();
+
+    $availableAt = queueConnection()->fetchOne(
+        queueConnection()->select()->from(queueTable(), 'available_at')->where('queue = ?', Icecube_EdgeCache_Model_PurgeBuffer::QUEUE),
+    );
+    expect(is_string($availableAt) ? strtotime($availableAt . ' UTC') : false)->toBeGreaterThan(time() + 20);
+});
+
+it('merges waiting purges into one call up to the adapter limit', function (): void {
+    foreach (['p1', 'p2', 'p3'] as $tag) {
+        QueueManager::dispatch(new Icecube_EdgeCache_Model_PurgeTagsMessage([$tag]), queue: Icecube_EdgeCache_Model_PurgeBuffer::QUEUE);
+    }
+    // Not due yet, but purging it early costs nothing and saves a call.
+    QueueManager::dispatch(new Icecube_EdgeCache_Model_PurgeTagsMessage(['p4']), 3600, Icecube_EdgeCache_Model_PurgeBuffer::QUEUE);
+
+    work();
+
+    expect(RecordingAdapter::$calls)->toBe([
+        ['purgeTags', ['p1', 'p2']],
+        ['purgeTags', ['p3', 'p4']],
+    ])->and(pendingPurges())->toBe([]);
+});
+
+it('requeues a failed purge with a backoff instead of throwing', function (): void {
+    RecordingAdapter::$failing = true;
+    QueueManager::dispatch(new Icecube_EdgeCache_Model_PurgeTagsMessage(['p1']), queue: Icecube_EdgeCache_Model_PurgeBuffer::QUEUE);
+    QueueManager::dispatch(new Icecube_EdgeCache_Model_PurgeTagsMessage(['p2']), queue: Icecube_EdgeCache_Model_PurgeBuffer::QUEUE);
+
+    work();
+
+    expect(pendingPurges())->toEqual([new Icecube_EdgeCache_Model_PurgeTagsMessage(['p1', 'p2'], 2)])
+        ->and(queuedPurges(Maho\Queue\Transport\DbTransport::STATUS_FAILED))->toBe([]);
+});
+
+it('purges everything once a purge has failed too often', function (): void {
+    RecordingAdapter::$failing = true;
+    QueueManager::dispatch(
+        new Icecube_EdgeCache_Model_PurgeTagsMessage(['p1'], Icecube_EdgeCache_Model_PurgeHandler::MAX_ATTEMPTS),
+        queue: Icecube_EdgeCache_Model_PurgeBuffer::QUEUE,
+    );
+
+    // One message only: the purge-all it queues would fail against the same CDN.
+    $transport = QueueManager::dbTransport();
+    foreach ($transport->getFromQueues([Icecube_EdgeCache_Model_PurgeBuffer::QUEUE]) as $envelope) {
+        handle($envelope);
+        $transport->ack($envelope);
+    }
+
+    expect(pendingPurges())->toEqual([new Icecube_EdgeCache_Model_PurgeAllMessage()]);
+});
+
+it('drops tag purges a purge-all has made redundant', function (): void {
+    QueueManager::dispatch(new Icecube_EdgeCache_Model_PurgeTagsMessage(['p1']), 3600, Icecube_EdgeCache_Model_PurgeBuffer::QUEUE);
+    QueueManager::dispatch(new Icecube_EdgeCache_Model_PurgeAllMessage(), queue: Icecube_EdgeCache_Model_PurgeBuffer::QUEUE);
+
+    work();
+
+    expect(RecordingAdapter::$calls)->toBe([['purgeAll', []]])
+        ->and(pendingPurges())->toBe([]);
 });
 
 it('queues another purge-all behind one that is already running', function (): void {

@@ -84,6 +84,7 @@ cms_index_noRoute</short_ttl_actions>
                 <stale_if_error>604800</stale_if_error>
                 <short_ttl>300</short_ttl>
                 <tag_prefix/>
+                <purge_delay>10</purge_delay>
             </general>
             <noop>
                 <log_purges>1</log_purges>

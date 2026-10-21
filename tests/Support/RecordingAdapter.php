@@ -20,7 +20,7 @@ final class RecordingAdapter implements Icecube_EdgeCache_Model_Adapter_AdapterI
     /** @var list<array{string, list<string>}> */
     public static array $calls = [];
 
-    /** Makes every call fail the way an unreachable or rate-limited CDN does */
+    /** Makes every purge fail the way an unreachable or rate-limited CDN does */
     public static bool $failing = false;
 
     /**
@@ -37,8 +37,6 @@ final class RecordingAdapter implements Icecube_EdgeCache_Model_Adapter_AdapterI
     #[\Override]
     public function getLimits(): Icecube_EdgeCache_Model_Adapter_Limits
     {
-        self::failIfFailing();
-
         return new Icecube_EdgeCache_Model_Adapter_Limits(tagsPerPurge: 2);
     }
 

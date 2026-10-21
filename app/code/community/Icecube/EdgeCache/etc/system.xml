@@ -111,6 +111,15 @@ SPDX-License-Identifier: OSL-3.0
                             <show_in_website>0</show_in_website>
                             <show_in_store>0</show_in_store>
                         </tag_prefix>
+                        <purge_delay translate="label comment">
+                            <label>Purge Delay (seconds)</label>
+                            <comment>How long a purge waits in the queue so the purges from a burst of saves go to the CDN as one request.</comment>
+                            <validate>validate-digits</validate>
+                            <sort_order>100</sort_order>
+                            <show_in_default>1</show_in_default>
+                            <show_in_website>0</show_in_website>
+                            <show_in_store>0</show_in_store>
+                        </purge_delay>
                     </fields>
                 </general>
                 <noop translate="label" module="edgecache">

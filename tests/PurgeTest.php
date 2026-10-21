@@ -85,7 +85,10 @@ it('queues a purge of the product tag when a product is saved', function (): voi
     $product->setPrice(12.5)->save();
 
     $buffered = Mage::getSingleton('edgecache/purgeBuffer')->getTags();
-    expect($buffered)->toContain('p' . $ids['product'])->toContain('p_all');
+    // p_all because a product save cleans the bare catalog_product tag. Its anchor categories
+    // are cleaned by id only, so c_all (every page with the top menu) stays.
+    expect($buffered)->toContain('p' . $ids['product'], 'p_all', 'c' . $ids['category'])
+        ->and(in_array('c_all', $buffered, true))->toBeFalse();
 
     Mage::getSingleton('edgecache/purgeBuffer')->flush();
     $tags = [];
@@ -103,7 +106,7 @@ it('queues a purge of the product tag when a product is saved', function (): voi
 });
 
 it('hands each queued purge to the configured adapter', function (): void {
-    Mage::getSingleton('edgecache/purgeBuffer')->addCacheTags(['catalog_product_7', 'cms_page_3']);
+    Mage::getSingleton('edgecache/purgeBuffer')->addCacheTags(['catalog_product', 'catalog_product_7', 'cms_page_3']);
     Mage::getSingleton('edgecache/purgeBuffer')->flush();
 
     foreach (queuedPurges() as $envelope) {
@@ -111,8 +114,8 @@ it('hands each queued purge to the configured adapter', function (): void {
     }
 
     expect(RecordingAdapter::$calls)->toBe([
-        ['purgeTags', ['p7', 'cp3']],
-        ['purgeTags', ['p_all', 'cp_all']],
+        ['purgeTags', ['p_all', 'p7']],
+        ['purgeTags', ['cp3']],
     ]);
 });
 

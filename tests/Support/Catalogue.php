@@ -10,16 +10,17 @@ use Mage_Catalog_Model_Product_Type;
 use Mage_Catalog_Model_Product_Visibility;
 
 /**
- * One category, product and CMS page for the pages the edge cache serves. The test install
+ * One category, product, CMS block and CMS page for the pages the edge cache serves. The test install
  * is empty, and every run starts from a fresh one, so they are created on first use.
  */
 final class Catalogue
 {
     public const SKU = 'edgecache-test';
     public const CMS_PAGE = 'edgecache-test';
+    public const CMS_BLOCK = 'edgecache-block';
 
     /**
-     * @return array{category: int, product: int, page: int}
+     * @return array{category: int, product: int, page: int, block: int}
      */
     public static function ensure(): array
     {
@@ -57,10 +58,18 @@ final class Catalogue
             ->setStockData(['use_config_manage_stock' => 1, 'qty' => 100, 'is_in_stock' => 1])
             ->save();
 
+        Mage::getModel('cms/block')
+            ->setTitle('Edge Cache Block')
+            ->setIdentifier(self::CMS_BLOCK)
+            ->setContent('<p>A block from the block cache</p>')
+            ->setIsActive(1)
+            ->setStores([0])
+            ->save();
+
         Mage::getModel('cms/page')
             ->setTitle('Edge Cache Page')
             ->setIdentifier(self::CMS_PAGE)
-            ->setContent('<p>Cached at the edge</p>')
+            ->setContent('<p>Cached at the edge</p>{{block id="' . self::CMS_BLOCK . '"}}')
             ->setIsActive(1)
             ->setStores([0])
             ->save();
@@ -71,7 +80,7 @@ final class Catalogue
     }
 
     /**
-     * @return array{category: int, product: int, page: int}
+     * @return array{category: int, product: int, page: int, block: int}
      */
     private static function ids(int $productId): array
     {
@@ -82,6 +91,7 @@ final class Catalogue
             'category' => (int) reset($categoryIds),
             'product' => $productId,
             'page' => (int) Mage::getModel('cms/page')->load(self::CMS_PAGE, 'identifier')->getId(),
+            'block' => (int) Mage::getModel('cms/block')->load(self::CMS_BLOCK, 'identifier')->getId(),
         ];
     }
 }

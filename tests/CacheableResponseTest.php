@@ -59,6 +59,25 @@ it('tags a category page with the products it lists', function (): void {
     expect($tags)->toContain('c' . $ids['category'])->toContain('p' . $ids['product']);
 });
 
+it('tags a CMS block on the page when it comes out of the block cache', function (): void {
+    $ids = Catalogue::ensure();
+    $path = '/' . Catalogue::CMS_PAGE . '/';
+    HttpServer::request('GET', $path)->getContent();
+
+    // No CMS block model loads on a block_html hit, so only the block's stored cache tags can say it's there.
+    $tags = explode(',', edgeHeader(HttpServer::request('GET', $path), 'X-Edge-Tags')[0] ?? '');
+
+    expect($tags)->toContain('cb' . $ids['block']);
+});
+
+it('gives every page with the top menu the coarse category tag', function (): void {
+    HttpServer::request('GET', '/')->getContent();
+
+    $tags = explode(',', edgeHeader(HttpServer::request('GET', '/'), 'X-Edge-Tags')[0] ?? '');
+
+    expect($tags)->toContain('c_all');
+});
+
 it('gives search results and 404s the short TTL', function (string $path, int $status): void {
     $response = HttpServer::request('GET', $path);
 

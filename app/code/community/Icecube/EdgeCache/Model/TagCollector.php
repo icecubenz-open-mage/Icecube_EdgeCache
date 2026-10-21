@@ -50,6 +50,28 @@ class Icecube_EdgeCache_Model_TagCollector
     }
 
     /**
+     * A block served from block_html loads no models, so its stored cache tags are the only
+     * record of what it shows. Core adds the model's id tags to CMS blocks and widgets as they
+     * render, so those come back specific. A type tag with no id of its type next to it (the
+     * top menu's catalog_category) means the block depends on the whole type, and becomes the
+     * coarse tag. Next to an id tag it's only the block's own default and is left out.
+     *
+     * @param array<mixed> $blockTags
+     */
+    public function collectBlock(array $blockTags): void
+    {
+        $tags = array_values(array_filter($blockTags, is_string(...)));
+        $specificTypes = [];
+        foreach ($tags as $tag) {
+            if (preg_match('/^(.+)_\d+$/', $tag, $match) === 1) {
+                $specificTypes[$match[1]] = true;
+            }
+        }
+
+        $this->add(array_filter($tags, fn(string $tag): bool => !isset($specificTypes[$tag])));
+    }
+
+    /**
      * @return list<string>
      */
     public function getRawTags(): array

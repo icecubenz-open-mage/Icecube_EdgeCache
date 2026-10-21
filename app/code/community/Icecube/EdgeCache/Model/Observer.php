@@ -69,6 +69,23 @@ class Icecube_EdgeCache_Model_Observer
     }
 
     /**
+     * Only blocks with a cache lifetime: getCacheTags() reads the cache, which is wasted on the rest.
+     */
+    #[Maho\Config\Observer('core_block_abstract_to_html_after', id: 'edgecache_collect_block_tags')]
+    public function collectBlockTags(\Maho\Event\Observer $observer): void
+    {
+        $block = $observer->getEvent()->getData('block');
+        if (!$block instanceof Mage_Core_Block_Abstract || $block->getCacheLifetime() === null || !$this->isCollecting()) {
+            return;
+        }
+
+        $tags = $block->getCacheTags();
+        if (is_array($tags)) {
+            Mage::getSingleton('edgecache/tagCollector')->collectBlock($tags);
+        }
+    }
+
+    /**
      * EAV collections other than products fire no after-load event (blog posts, for one),
      * so a page listing them is tagged with their type instead of each item.
      */

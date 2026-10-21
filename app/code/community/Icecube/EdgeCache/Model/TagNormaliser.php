@@ -3,8 +3,10 @@
 /**
  * Turns Maho cache tags into short edge tags and fits them into an adapter's limits.
  *
- * catalog_product_12 becomes p12. A bare type tag (catalog_product) becomes the
- * coarse tag p_all, which listing pages carry and every save of that type purges.
+ * catalog_product_12 becomes p12. A bare type tag (catalog_product) becomes the coarse
+ * tag p_all. A page carries it when it shows something that depends on the whole type
+ * (the top menu, a listing whose items load without an event, tags over the adapter's
+ * limit), and it's purged when core cleans the bare tag, which every model save does.
  * Any other Maho tag (config, layout, block html) has no meaning at the edge and is dropped.
  *
  * SPDX-FileCopyrightText: 2026 Icecube
@@ -52,23 +54,6 @@ final class Icecube_EdgeCache_Model_TagNormaliser
         }
 
         return array_keys($normalised);
-    }
-
-    /**
-     * Adds the coarse tag of every type present, so pages that overflowed their tag
-     * budget are purged along with the entity that changed.
-     *
-     * @param list<string> $tags normalised
-     * @return list<string>
-     */
-    public function withCoarse(array $tags): array
-    {
-        $all = array_fill_keys($tags, true);
-        foreach ($tags as $tag) {
-            $all[$this->coarse($this->typeOf($tag))] = true;
-        }
-
-        return array_keys($all);
     }
 
     /**

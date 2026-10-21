@@ -28,8 +28,7 @@ class Icecube_EdgeCache_Model_PurgeBuffer
      */
     public function addCacheTags(iterable $cacheTags): void
     {
-        $normaliser = Mage::helper('edgecache')->getTagNormaliser();
-        $tags = $normaliser->withCoarse($normaliser->normalise($cacheTags));
+        $tags = Mage::helper('edgecache')->getTagNormaliser()->normalise($cacheTags);
         if ($tags === []) {
             return;
         }

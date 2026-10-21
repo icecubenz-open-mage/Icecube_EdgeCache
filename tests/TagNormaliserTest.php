@@ -30,12 +30,7 @@ it('turns a bare type tag into the coarse tag of that type', function (): void {
 it('prefixes every tag so environments sharing a zone stay apart', function (): void {
     $normaliser = new TagNormaliser('Stg-');
 
-    expect($normaliser->normalise(['catalog_product_1', 'catalog_product']))->toBe(['stg-p1', 'stg-p_all'])
-        ->and($normaliser->withCoarse(['stg-p1', 'stg-c2']))->toBe(['stg-p1', 'stg-c2', 'stg-p_all', 'stg-c_all']);
-});
-
-it('adds the coarse tag of each type to a purge', function (): void {
-    expect(new TagNormaliser()->withCoarse(['p12', 'p13', 'c3']))->toBe(['p12', 'p13', 'c3', 'p_all', 'c_all']);
+    expect($normaliser->normalise(['catalog_product_1', 'catalog_product']))->toBe(['stg-p1', 'stg-p_all']);
 });
 
 it('leaves tags alone when they fit', function (): void {

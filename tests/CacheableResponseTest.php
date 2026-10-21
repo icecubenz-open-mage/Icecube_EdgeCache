@@ -139,10 +139,9 @@ it('does not cache a redirect from an allowlisted action', function (): void {
 it('puts the sentinel only where edgecache.js swaps it for the key', function (string $path): void {
     $body = HttpServer::request('GET', $path)->getContent(false);
 
-    // The contexts edgecache.js rewrites (FORM_KEY_CONTEXT there, plus the minicart's formKey):
-    // a /form_key/ URL segment, a form_key= query, an escaped "form_key":"..." in data-params,
-    // a form_key input's value, and the minicart script.
-    $allowed = '#(?:form_key/|form_key=|form_key&quot;:&quot;|form_key\\?":\s*\\?"|name="form_key"[^>]*value="|formKey:\s*")$#';
+    // The places edgecache.js swaps: a form_key input's value, the minicart script, and a
+    // form_key in an href, action, onclick or data-params attribute (KEY_ATTRIBUTES there).
+    $allowed = '#(?:name="form_key"[^>]*value="|formKey:\s*"|\s(?:href|action|onclick|data-params)="[^"]*form_key(?:/|=|&quot;:&quot;))$#';
     $offset = 0;
     $count = 0;
     while (($at = strpos($body, Icecube_EdgeCache_Helper_Data::FORM_KEY_SENTINEL, $offset)) !== false) {

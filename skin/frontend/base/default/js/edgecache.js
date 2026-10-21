@@ -11,8 +11,10 @@
 
     const SENTINEL = '__EDGEFK__';
     // Where core prints a form key: a /form_key/ URL segment, a form_key= query and the
-    // "form_key":"..." of data-params JSON. Anywhere else the sentinel came from user input.
+    // "form_key":"..." of data-params JSON, in these attributes only. A value attribute is
+    // left out because a search box reflects ?q=form_key=__EDGEFK__ into one.
     const FORM_KEY_CONTEXT = /(form_key(?:\/|=|\\?"\s*:\s*\\?"))__EDGEFK__/;
+    const KEY_ATTRIBUTES = ['href', 'action', 'onclick', 'data-params'];
     const MARKER = /(?:^|;\s*)edgecache_s=1(?:;|$)/;
     const ACTIONABLE = 'a, button, input[type="submit"], input[type="image"], [onclick], [data-params]';
 
@@ -35,9 +37,13 @@
         return el instanceof HTMLInputElement && el.name === 'form_key';
     }
 
+    function keyAttributes(el) {
+        return KEY_ATTRIBUTES.map((name) => el.getAttributeNode(name)).filter((attr) => attr !== null);
+    }
+
     function hasSentinel(el) {
         return (isKeyInput(el) && el.value === SENTINEL)
-            || Array.from(el.attributes).some((attr) => FORM_KEY_CONTEXT.test(attr.value));
+            || keyAttributes(el).some((attr) => FORM_KEY_CONTEXT.test(attr.value));
     }
 
     function needsKey(target) {
@@ -58,8 +64,9 @@
 
     function replaceSentinel(formKey) {
         const everywhere = new RegExp(FORM_KEY_CONTEXT, 'g');
-        for (const el of document.querySelectorAll('*')) {
-            for (const attr of Array.from(el.attributes)) {
+        const selector = [...KEY_ATTRIBUTES.map((name) => `[${name}]`), 'input[name="form_key"]'].join(', ');
+        for (const el of document.querySelectorAll(selector)) {
+            for (const attr of keyAttributes(el)) {
                 if (FORM_KEY_CONTEXT.test(attr.value)) {
                     el.setAttribute(attr.name, attr.value.replace(everywhere, (match, prefix) => prefix + formKey));
                 }

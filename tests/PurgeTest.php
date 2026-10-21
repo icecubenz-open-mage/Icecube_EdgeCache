@@ -14,6 +14,8 @@ beforeEach(function (): void {
     currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '1');
     RecordingAdapter::install();
     deleteQueuedPurges();
+    // As a storefront or admin request does, so the buffer holds purges until the response is sent.
+    Mage::getSingleton('edgecache/purgeBuffer')->holdUntilResponse();
 });
 
 afterEach(function (): void {
@@ -134,6 +136,31 @@ it('queues one purge-all however many times it is asked for', function (): void 
 
     handle($queued[0]);
     expect(RecordingAdapter::$calls)->toBe([['purgeAll', []]]);
+});
+
+it('queues a purge straight away outside a web request', function (): void {
+    // A queue worker or cron run: nothing sends a response, and the process may live for an hour.
+    $buffer = new Icecube_EdgeCache_Model_PurgeBuffer();
+
+    $buffer->addCacheTags(['catalog_product_7']);
+
+    expect(queuedPurges())->toHaveCount(1)
+        ->and($buffer->getTags())->toBe([]);
+});
+
+it('keeps purges it could not queue, without throwing after the response', function (): void {
+    Mage::getSingleton('edgecache/purgeBuffer')->addCacheTags(['catalog_product_7']);
+    RecordingAdapter::$failing = true;
+
+    Mage::dispatchEvent('controller_front_send_response_after');
+
+    expect(Mage::getSingleton('edgecache/purgeBuffer')->getTags())->toBe(['p7'])
+        ->and(queuedPurges())->toBe([]);
+
+    RecordingAdapter::$failing = false;
+    Mage::getSingleton('edgecache/purgeBuffer')->flush();
+
+    expect(queuedPurges())->toHaveCount(1);
 });
 
 it('queues another purge-all behind one that is already running', function (): void {

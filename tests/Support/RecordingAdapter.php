@@ -8,6 +8,7 @@ use Icecube_EdgeCache_Model_Adapter_AdapterInterface;
 use Icecube_EdgeCache_Model_Adapter_Limits;
 use Icecube_EdgeCache_Model_Ttl;
 use Mage;
+use RuntimeException;
 
 /**
  * Stands in for a CDN and remembers every purge it was asked for.
@@ -19,12 +20,16 @@ final class RecordingAdapter implements Icecube_EdgeCache_Model_Adapter_AdapterI
     /** @var list<array{string, list<string>}> */
     public static array $calls = [];
 
+    /** Makes every call fail the way an unreachable or rate-limited CDN does */
+    public static bool $failing = false;
+
     /**
      * Registers the adapter the way a third-party module would, then selects it for the current store.
      */
     public static function install(): void
     {
         self::$calls = [];
+        self::$failing = false;
         Mage::app()->getConfig()->setNode('global/edgecache/adapters/' . self::CODE . '/class', self::class);
         Mage::app()->getStore()?->setConfig('edgecache/general/adapter', self::CODE);
     }
@@ -32,6 +37,8 @@ final class RecordingAdapter implements Icecube_EdgeCache_Model_Adapter_AdapterI
     #[\Override]
     public function getLimits(): Icecube_EdgeCache_Model_Adapter_Limits
     {
+        self::failIfFailing();
+
         return new Icecube_EdgeCache_Model_Adapter_Limits(tagsPerPurge: 2);
     }
 
@@ -50,6 +57,7 @@ final class RecordingAdapter implements Icecube_EdgeCache_Model_Adapter_AdapterI
     #[\Override]
     public function purgeTags(array $tags): void
     {
+        self::failIfFailing();
         self::$calls[] = ['purgeTags', $tags];
     }
 
@@ -62,6 +70,14 @@ final class RecordingAdapter implements Icecube_EdgeCache_Model_Adapter_AdapterI
     #[\Override]
     public function purgeAll(): void
     {
+        self::failIfFailing();
         self::$calls[] = ['purgeAll', []];
+    }
+
+    private static function failIfFailing(): void
+    {
+        if (self::$failing) {
+            throw new RuntimeException('CDN rate limit');
+        }
     }
 }

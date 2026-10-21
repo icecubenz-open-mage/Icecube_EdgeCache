@@ -191,10 +191,16 @@ class Icecube_EdgeCache_Model_Observer
         }
     }
 
+    #[Maho\Config\Observer('controller_front_init_before', id: 'edgecache_hold_purges')]
+    public function holdPurges(\Maho\Event\Observer $observer): void
+    {
+        Mage::getSingleton('edgecache/purgeBuffer')->holdUntilResponse();
+    }
+
     #[Maho\Config\Observer('controller_front_send_response_after', id: 'edgecache_flush_purges')]
     public function flushPurges(\Maho\Event\Observer $observer): void
     {
-        Mage::getSingleton('edgecache/purgeBuffer')->flush();
+        Mage::getSingleton('edgecache/purgeBuffer')->flushQuietly();
     }
 
     private function isCollecting(): bool

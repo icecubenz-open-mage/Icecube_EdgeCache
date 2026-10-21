@@ -87,6 +87,36 @@ it('leaves the response private when a request cookie can change the page', func
     'accessibility scan' => 'maho_a11y_scan=' . str_repeat('a', 32),
 ]);
 
+it('refuses a sessionless page that sends a cookie anyway', function (): void {
+    // Naming the default store view makes core delete the store cookie, a Set-Cookie
+    // that nothing in the edge cache predicted.
+    $response = HttpServer::request('GET', '/edgecache-product/?___store=default');
+
+    expect($response->getStatusCode())->toBe(200)
+        ->and(implode("\n", edgeHeader($response, 'Set-Cookie')))->toContain('store=')
+        ->and(edgeHeader($response, 'Cache-Control')[0] ?? '')->not->toContain('public')
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store'])
+        ->and(edgeHeader($response, 'X-Edge-Tags'))->toBe([]);
+});
+
+it('answers HEAD like GET', function (): void {
+    $response = HttpServer::request('HEAD', '/edgecache-product/');
+
+    expect($response->getStatusCode())->toBe(200)
+        ->and(edgeHeader($response, 'Set-Cookie'))->toBe([])
+        ->and(edgeHeader($response, 'Cache-Control'))->toBe(['max-age=0, must-revalidate, public'])
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['max-age=86400, stale-while-revalidate=86400, stale-if-error=604800']);
+});
+
+it('does not cache a redirect from an allowlisted action', function (): void {
+    // A search with exactly one match redirects to that product.
+    $response = HttpServer::request('GET', '/catalogsearch/result/?q=' . rawurlencode('Edge Cache Product'));
+
+    expect($response->getStatusCode())->toBe(302)
+        ->and(edgeHeader($response, 'Cache-Control')[0] ?? '')->not->toContain('public')
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store']);
+});
+
 it('never marks a POST cacheable', function (string $path): void {
     $response = HttpServer::request('POST', $path, body: ['q' => 'x']);
 

@@ -38,6 +38,16 @@ it('returns the visitor state as private JSON with a real form key', function ()
         ->and(is_array($state) ? $state['formKey'] : null)->toMatch('/^[A-Za-z0-9]{16}$/');
 });
 
+it('tells the edge not to store the state and starts the session it reports on', function (): void {
+    $response = HttpServer::request('GET', '/edgecache/state/');
+    $cookies = implode("\n", $response->getHeaders(false)['set-cookie'] ?? []);
+
+    expect($response->getHeaders(false)['x-edge-cache-control'] ?? [])->toBe(['no-store'])
+        ->and($response->getHeaders(false)['x-edge-tags'] ?? [])->toBe([])
+        ->and($cookies)->toContain('maho_session=')
+        ->and($cookies)->toContain('edgecache_s=1');
+});
+
 it('hands out a form key that passes the CSRF check on a POST', function (): void {
     ['cookie' => $cookie, 'state' => $state] = fetchState();
     $ids = Catalogue::ensure();

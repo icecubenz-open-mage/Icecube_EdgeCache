@@ -76,6 +76,21 @@ it('keeps a session for a request that is not GET or HEAD', function (): void {
     expect($action->getFlag('', Mage_Core_Controller_Varien_Action::FLAG_NO_START_SESSION))->toBeFalsy();
 });
 
+it('lets a forward to an action that is not allowlisted start the session', function (): void {
+    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '1');
+    $policy = Mage::getSingleton('edgecache/policy');
+    $request = new Mage_Core_Controller_Request_Http(Request::create('http://localhost/', 'GET'));
+    $request->setRouteName('catalog')->setControllerName('product')->setActionName('view');
+    $policy->prepareSession(new Mage_Core_Controller_Front_Action($request, new Mage_Core_Controller_Response_Http()));
+
+    $request->setRouteName('customer')->setControllerName('account')->setActionName('login');
+    $forwarded = new Mage_Core_Controller_Front_Action($request, new Mage_Core_Controller_Response_Http());
+    $policy->prepareSession($forwarded);
+
+    expect($policy->isSessionless())->toBeFalse()
+        ->and($forwarded->getFlag('', Mage_Core_Controller_Varien_Action::FLAG_NO_START_SESSION))->toBeFalsy();
+});
+
 it('does nothing while the module is disabled', function (): void {
     $request = new Mage_Core_Controller_Request_Http(Request::create('http://localhost/', 'GET'));
     $request->setRouteName('cms')->setControllerName('index')->setActionName('index');

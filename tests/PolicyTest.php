@@ -9,7 +9,7 @@ use Symfony\Component\HttpFoundation\Request;
  * the policy about the response. Statuses other than 200 and 404 are hard to provoke over
  * HTTP on an empty store, which is why these live here and not in CacheableResponseTest.
  */
-function sessionlessResponse(int $status, string $contentType = 'text/html; charset=UTF-8'): Mage_Core_Controller_Response_Http
+function sessionlessResponse(int $status, string $contentType = 'text/html; charset=UTF-8', ?string $body = null): Mage_Core_Controller_Response_Http
 {
     currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '1');
 
@@ -23,7 +23,7 @@ function sessionlessResponse(int $status, string $contentType = 'text/html; char
 
     $response->setHttpResponseCode($status)
         ->setHeader('Content-Type', $contentType, true)
-        ->setBody('<form><input name="form_key" value="' . Mage::getSingleton('core/session')->getFormKey() . '"></form>');
+        ->setBody($body ?? '<form><input name="form_key" value="' . Mage::getSingleton('core/session')->getFormKey() . '"></form>');
     $policy->applyToResponse($response);
 
     return $response;
@@ -99,4 +99,20 @@ it('does nothing while the module is disabled', function (): void {
     Mage::getSingleton('edgecache/policy')->prepareSession($action);
 
     expect(Mage::getSingleton('edgecache/policy')->isSessionless())->toBeFalse();
+});
+
+it('logs a refused render once an hour per action', function (): void {
+    // The logger rotates daily, so edgecache.log is written as edgecache-<date>.log.
+    $countLines = fn(): int => array_sum(array_map(
+        fn(string $file): int => substr_count((string) file_get_contents($file), 'catalog_product_view rendered without a session'),
+        glob(Mage::getBaseDir('var') . '/log/edgecache*.log') ?: [],
+    ));
+    currentStore()->setConfig('dev/log/active', '1');
+    Mage::helper('core')->rateLimiterBy(Icecube_EdgeCache_Model_Policy::REFUSAL_LOG_LIMITER, 'catalog_product_view', 1, 3600)->clear();
+    $before = $countLines();
+
+    sessionlessResponse(200, body: '<p>' . Icecube_EdgeCache_Helper_Data::FORM_KEY_SENTINEL . '</p>');
+    sessionlessResponse(200, body: '<p>' . Icecube_EdgeCache_Helper_Data::FORM_KEY_SENTINEL . '</p>');
+
+    expect($countLines() - $before)->toBe(1);
 });

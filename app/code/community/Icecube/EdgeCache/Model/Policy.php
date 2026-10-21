@@ -12,6 +12,8 @@ declare(strict_types=1);
 
 class Icecube_EdgeCache_Model_Policy
 {
+    public const REFUSAL_LOG_LIMITER = 'edgecache_refusal_log';
+
     public const BROWSER_CACHE_CONTROL = 'public, max-age=0, must-revalidate';
     public const PRIVATE_CACHE_CONTROL = 'private, no-store';
 
@@ -76,7 +78,10 @@ class Icecube_EdgeCache_Model_Policy
 
         $refusal = $this->getRefusal($response);
         if ($refusal !== null) {
-            Mage::log(sprintf('%s rendered without a session but %s, so it was not cached', $this->sessionlessAction, $refusal), Mage::LOG_WARNING, Icecube_EdgeCache_Model_Adapter_Noop::LOG_FILE);
+            // A module that always starts a session on an allowlisted page would refuse every request.
+            if (Mage::helper('core')->rateLimiterBy(self::REFUSAL_LOG_LIMITER, $this->sessionlessAction, 1, 3600)->attempt()) {
+                Mage::log(sprintf('%s rendered without a session but %s, so it was not cached', $this->sessionlessAction, $refusal), Mage::LOG_WARNING, Icecube_EdgeCache_Model_Adapter_Noop::LOG_FILE);
+            }
             $this->sendUncacheable($response);
             return;
         }

@@ -136,6 +136,33 @@ it('does not cache a redirect from an allowlisted action', function (): void {
         ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store']);
 });
 
+it('puts the sentinel only where edgecache.js swaps it for the key', function (string $path): void {
+    $body = HttpServer::request('GET', $path)->getContent(false);
+
+    // The contexts edgecache.js rewrites (FORM_KEY_CONTEXT there, plus the minicart's formKey):
+    // a /form_key/ URL segment, a form_key= query, an escaped "form_key":"..." in data-params,
+    // a form_key input's value, and the minicart script.
+    $allowed = '#(?:form_key/|form_key=|form_key&quot;:&quot;|form_key\\?":\s*\\?"|name="form_key"[^>]*value="|formKey:\s*")$#';
+    $offset = 0;
+    $count = 0;
+    while (($at = strpos($body, Icecube_EdgeCache_Helper_Data::FORM_KEY_SENTINEL, $offset)) !== false) {
+        $before = substr($body, max(0, $at - 200), min($at, 200));
+        expect(preg_match($allowed, $before))->toBe(1, 'Sentinel in an unexpected place: ' . substr($before, -80));
+        $offset = $at + 1;
+        $count++;
+    }
+
+    expect($count)->toBeGreaterThan(0);
+})->with(['/', '/edgecache-category/', '/edgecache-product/']);
+
+it('does not cache a page that echoes the sentinel back from the request', function (): void {
+    // edgecache.js would otherwise put the visitor's key into the search box, then the URL and Referer.
+    $response = HttpServer::request('GET', '/catalogsearch/result/?q=' . Icecube_EdgeCache_Helper_Data::FORM_KEY_SENTINEL);
+
+    expect($response->getStatusCode())->toBe(200)
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store']);
+});
+
 it('never marks a POST cacheable', function (string $path): void {
     $response = HttpServer::request('POST', $path, body: ['q' => 'x']);
 

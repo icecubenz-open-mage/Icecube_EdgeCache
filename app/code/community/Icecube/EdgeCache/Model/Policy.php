@@ -127,6 +127,10 @@ class Icecube_EdgeCache_Model_Policy
         if ($this->hasCookie($response)) {
             return 'a cookie was set';
         }
+        $body = $response->getBody();
+        if (is_string($body) && str_contains($body, Icecube_EdgeCache_Helper_Data::FORM_KEY_SENTINEL)) {
+            return 'it echoes the form key sentinel from the request';
+        }
 
         return null;
     }

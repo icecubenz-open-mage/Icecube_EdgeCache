@@ -10,6 +10,9 @@
     'use strict';
 
     const SENTINEL = '__EDGEFK__';
+    // Where core prints a form key: a /form_key/ URL segment, a form_key= query and the
+    // "form_key":"..." of data-params JSON. Anywhere else the sentinel came from user input.
+    const FORM_KEY_CONTEXT = /(form_key(?:\/|=|\\?"\s*:\s*\\?"))__EDGEFK__/;
     const MARKER = /(?:^|;\s*)edgecache_s=1(?:;|$)/;
     const ACTIONABLE = 'a, button, input[type="submit"], input[type="image"], [onclick], [data-params]';
 
@@ -28,9 +31,13 @@
         return window.EDGECACHE_STATE_URL;
     }
 
+    function isKeyInput(el) {
+        return el instanceof HTMLInputElement && el.name === 'form_key';
+    }
+
     function hasSentinel(el) {
-        return Array.from(el.attributes).some((attr) => attr.value.includes(SENTINEL))
-            || (typeof el.value === 'string' && el.value.includes(SENTINEL));
+        return (isKeyInput(el) && el.value === SENTINEL)
+            || Array.from(el.attributes).some((attr) => FORM_KEY_CONTEXT.test(attr.value));
     }
 
     function needsKey(target) {
@@ -50,14 +57,16 @@
     }
 
     function replaceSentinel(formKey) {
+        const everywhere = new RegExp(FORM_KEY_CONTEXT, 'g');
         for (const el of document.querySelectorAll('*')) {
             for (const attr of Array.from(el.attributes)) {
-                if (attr.value.includes(SENTINEL)) {
-                    el.setAttribute(attr.name, attr.value.replaceAll(SENTINEL, formKey));
+                if (FORM_KEY_CONTEXT.test(attr.value)) {
+                    el.setAttribute(attr.name, attr.value.replace(everywhere, (match, prefix) => prefix + formKey));
                 }
             }
-            if (typeof el.value === 'string' && el.value.includes(SENTINEL)) {
-                el.value = el.value.replaceAll(SENTINEL, formKey);
+            if (isKeyInput(el) && el.value === SENTINEL) {
+                el.value = formKey;
+                el.setAttribute('value', formKey);
             }
         }
     }
@@ -100,11 +109,14 @@
         return pending;
     }
 
+    // Hydrating starts a session, and a visitor with one bypasses the edge from then on,
+    // so only for a control or form that posts a key: not the search box or newsletter.
     function startOnIntent(event) {
         if (settled || !(event.target instanceof Element)) {
             return;
         }
-        if (event.target.closest('form') || needsKey(event.target)) {
+        const form = event.target.closest('form');
+        if (needsKey(event.target) || (form && formNeedsKey(form))) {
             hydrate();
         }
     }
@@ -112,7 +124,9 @@
     // Capture phase, so an inline onclick (customFormSubmit, productAddToCartForm.submit)
     // never runs with the sentinel still in place; the click is replayed once hydrated.
     function holdClick(event) {
-        if (settled || !needsKey(event.target)) {
+        // A replayed click is a plain one, so leave a new-tab or middle click to the browser.
+        const modified = event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey;
+        if (settled || modified || !needsKey(event.target)) {
             return;
         }
         const el = event.target.closest(ACTIONABLE);

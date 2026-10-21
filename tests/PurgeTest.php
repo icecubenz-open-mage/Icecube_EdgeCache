@@ -136,6 +136,21 @@ it('queues one purge-all however many times it is asked for', function (): void 
     expect(RecordingAdapter::$calls)->toBe([['purgeAll', []]]);
 });
 
+it('queues another purge-all behind one that is already running', function (): void {
+    Mage::getSingleton('edgecache/purgeBuffer')->addAll();
+    Mage::getSingleton('edgecache/purgeBuffer')->flush();
+    // A worker has claimed it and may already have called the CDN, so a change made now needs its own purge.
+    queueConnection()->update(queueTable(), [
+        'status' => Maho\Queue\Transport\DbTransport::STATUS_PROCESSING,
+        'claimed_at' => Mage_Core_Model_Locale::nowUtc(),
+    ], ['queue = ?' => Icecube_EdgeCache_Model_PurgeBuffer::QUEUE]);
+
+    Mage::getSingleton('edgecache/purgeBuffer')->addAll();
+    Mage::getSingleton('edgecache/purgeBuffer')->flush();
+
+    expect(queuedPurges())->toHaveCount(2);
+});
+
 it('ignores cache cleans that carry no edge tags', function (): void {
     Mage::app()->cleanCache(['config', 'block_html']);
 

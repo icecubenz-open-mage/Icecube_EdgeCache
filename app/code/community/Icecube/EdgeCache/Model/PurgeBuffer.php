@@ -66,7 +66,14 @@ class Icecube_EdgeCache_Model_PurgeBuffer
         $this->all = false;
 
         if ($all) {
-            \Maho\Queue\QueueManager::dispatch(new Icecube_EdgeCache_Model_PurgeAllMessage(), queue: self::QUEUE, dedupeKey: self::PURGE_ALL_DEDUPE_KEY);
+            if (!Mage::getSingleton('edgecache/pendingPurges')->hasPurgeAll()) {
+                // The key is recorded, not enforced: Maho's check would also count a claimed row.
+                \Maho\Queue\QueueManager::dispatch(
+                    new Icecube_EdgeCache_Model_PurgeAllMessage(),
+                    queue: self::QUEUE,
+                    stamps: [new \Maho\Queue\Stamp\DedupeKeyStamp(self::PURGE_ALL_DEDUPE_KEY, enforce: false)],
+                );
+            }
             return;
         }
         if ($tags === []) {

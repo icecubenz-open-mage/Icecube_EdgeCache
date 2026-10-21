@@ -1,0 +1,202 @@
+<?xml version="1.0"?>
+<!--
+SPDX-FileCopyrightText: 2026 Icecube
+SPDX-License-Identifier: OSL-3.0
+-->
+<config>
+    <sections>
+        <edgecache translate="label" module="edgecache">
+            <label>Edge Cache</label>
+            <tab>advanced</tab>
+            <frontend_type>text</frontend_type>
+            <sort_order>910</sort_order>
+            <show_in_default>1</show_in_default>
+            <show_in_website>1</show_in_website>
+            <show_in_store>1</show_in_store>
+            <groups>
+                <general translate="label" module="edgecache">
+                    <label>General</label>
+                    <frontend_type>text</frontend_type>
+                    <sort_order>10</sort_order>
+                    <show_in_default>1</show_in_default>
+                    <show_in_website>1</show_in_website>
+                    <show_in_store>1</show_in_store>
+                    <fields>
+                        <enabled translate="label comment">
+                            <label>Enabled</label>
+                            <comment>Pages on the list below render without a session for visitors who have none, and are marked cacheable for the CDN.</comment>
+                            <frontend_type>select</frontend_type>
+                            <source_model>adminhtml/system_config_source_yesno</source_model>
+                            <sort_order>10</sort_order>
+                            <show_in_default>1</show_in_default>
+                            <show_in_website>1</show_in_website>
+                            <show_in_store>1</show_in_store>
+                        </enabled>
+                        <adapter translate="label">
+                            <label>CDN</label>
+                            <frontend_type>select</frontend_type>
+                            <source_model>edgecache/system_config_source_adapter</source_model>
+                            <sort_order>20</sort_order>
+                            <show_in_default>1</show_in_default>
+                            <show_in_website>0</show_in_website>
+                            <show_in_store>0</show_in_store>
+                        </adapter>
+                        <cacheable_actions translate="label comment">
+                            <label>Cacheable Pages</label>
+                            <comment>Full action names, one per line.</comment>
+                            <frontend_type>textarea</frontend_type>
+                            <sort_order>30</sort_order>
+                            <show_in_default>1</show_in_default>
+                            <show_in_website>1</show_in_website>
+                            <show_in_store>1</show_in_store>
+                        </cacheable_actions>
+                        <ttl translate="label comment">
+                            <label>Edge TTL</label>
+                            <comment>Seconds. Browsers always revalidate.</comment>
+                            <validate>validate-digits</validate>
+                            <sort_order>40</sort_order>
+                            <show_in_default>1</show_in_default>
+                            <show_in_website>1</show_in_website>
+                            <show_in_store>1</show_in_store>
+                        </ttl>
+                        <stale_while_revalidate translate="label">
+                            <label>Stale While Revalidate</label>
+                            <validate>validate-digits</validate>
+                            <sort_order>50</sort_order>
+                            <show_in_default>1</show_in_default>
+                            <show_in_website>1</show_in_website>
+                            <show_in_store>1</show_in_store>
+                        </stale_while_revalidate>
+                        <stale_if_error translate="label">
+                            <label>Stale If Error</label>
+                            <validate>validate-digits</validate>
+                            <sort_order>60</sort_order>
+                            <show_in_default>1</show_in_default>
+                            <show_in_website>1</show_in_website>
+                            <show_in_store>1</show_in_store>
+                        </stale_if_error>
+                        <short_ttl_actions translate="label comment">
+                            <label>Short TTL Pages</label>
+                            <comment>Full action names, one per line. These and every 404 use the short TTL, since no tag purges them.</comment>
+                            <frontend_type>textarea</frontend_type>
+                            <sort_order>70</sort_order>
+                            <show_in_default>1</show_in_default>
+                            <show_in_website>1</show_in_website>
+                            <show_in_store>1</show_in_store>
+                        </short_ttl_actions>
+                        <short_ttl translate="label comment">
+                            <label>Short TTL</label>
+                            <comment>Seconds. 0 stops these pages being cached.</comment>
+                            <validate>validate-digits</validate>
+                            <sort_order>80</sort_order>
+                            <show_in_default>1</show_in_default>
+                            <show_in_website>1</show_in_website>
+                            <show_in_store>1</show_in_store>
+                        </short_ttl>
+                        <tag_prefix translate="label comment">
+                            <label>Tag Prefix</label>
+                            <comment>Keeps the tags of environments sharing one CDN zone apart, for example "stg-".</comment>
+                            <validate>validate-code</validate>
+                            <sort_order>90</sort_order>
+                            <show_in_default>1</show_in_default>
+                            <show_in_website>0</show_in_website>
+                            <show_in_store>0</show_in_store>
+                        </tag_prefix>
+                    </fields>
+                </general>
+                <noop translate="label" module="edgecache">
+                    <label>None</label>
+                    <frontend_type>text</frontend_type>
+                    <sort_order>20</sort_order>
+                    <show_in_default>1</show_in_default>
+                    <show_in_website>0</show_in_website>
+                    <show_in_store>0</show_in_store>
+                    <fields>
+                        <log_purges translate="label comment">
+                            <label>Log Purges</label>
+                            <comment>Written to var/log/edgecache.log.</comment>
+                            <frontend_type>select</frontend_type>
+                            <source_model>adminhtml/system_config_source_yesno</source_model>
+                            <sort_order>10</sort_order>
+                            <show_in_default>1</show_in_default>
+                            <show_in_website>0</show_in_website>
+                            <show_in_store>0</show_in_store>
+                            <depends><adapter><fieldset>general</fieldset><value>noop</value></adapter></depends>
+                        </log_purges>
+                    </fields>
+                </noop>
+                <cloudflare translate="label" module="edgecache">
+                    <label>Cloudflare</label>
+                    <frontend_type>text</frontend_type>
+                    <sort_order>30</sort_order>
+                    <show_in_default>1</show_in_default>
+                    <show_in_website>0</show_in_website>
+                    <show_in_store>0</show_in_store>
+                    <fields>
+                        <zone_id translate="label">
+                            <label>Zone ID</label>
+                            <sort_order>10</sort_order>
+                            <show_in_default>1</show_in_default>
+                            <show_in_website>0</show_in_website>
+                            <show_in_store>0</show_in_store>
+                            <depends><adapter><fieldset>general</fieldset><value>cloudflare</value></adapter></depends>
+                        </zone_id>
+                        <api_token translate="label comment">
+                            <label>API Token</label>
+                            <comment>Needs the Cache Purge permission only.</comment>
+                            <frontend_type>obscure</frontend_type>
+                            <backend_model>adminhtml/system_config_backend_encrypted</backend_model>
+                            <sort_order>20</sort_order>
+                            <show_in_default>1</show_in_default>
+                            <show_in_website>0</show_in_website>
+                            <show_in_store>0</show_in_store>
+                            <depends><adapter><fieldset>general</fieldset><value>cloudflare</value></adapter></depends>
+                        </api_token>
+                        <header translate="label comment">
+                            <label>TTL Header</label>
+                            <comment>Cloudflare-CDN-Cache-Control when another CDN sits behind Cloudflare, since CDN-Cache-Control is passed on to it.</comment>
+                            <frontend_type>select</frontend_type>
+                            <source_model>edgecache/system_config_source_cloudflareHeader</source_model>
+                            <sort_order>30</sort_order>
+                            <show_in_default>1</show_in_default>
+                            <show_in_website>0</show_in_website>
+                            <show_in_store>0</show_in_store>
+                            <depends><adapter><fieldset>general</fieldset><value>cloudflare</value></adapter></depends>
+                        </header>
+                    </fields>
+                </cloudflare>
+                <varnish translate="label" module="edgecache">
+                    <label>Varnish</label>
+                    <frontend_type>text</frontend_type>
+                    <sort_order>40</sort_order>
+                    <show_in_default>1</show_in_default>
+                    <show_in_website>0</show_in_website>
+                    <show_in_store>0</show_in_store>
+                    <fields>
+                        <nodes translate="label comment">
+                            <label>Nodes</label>
+                            <comment>One URL per line, for example http://10.0.0.5:6081. Every node gets every purge.</comment>
+                            <frontend_type>textarea</frontend_type>
+                            <sort_order>10</sort_order>
+                            <show_in_default>1</show_in_default>
+                            <show_in_website>0</show_in_website>
+                            <show_in_store>0</show_in_store>
+                            <depends><adapter><fieldset>general</fieldset><value>varnish</value></adapter></depends>
+                        </nodes>
+                        <soft_purge translate="label comment">
+                            <label>Soft Purge</label>
+                            <comment>Keeps purged pages servable as stale while Varnish refetches them.</comment>
+                            <frontend_type>select</frontend_type>
+                            <source_model>adminhtml/system_config_source_yesno</source_model>
+                            <sort_order>20</sort_order>
+                            <show_in_default>1</show_in_default>
+                            <show_in_website>0</show_in_website>
+                            <show_in_store>0</show_in_store>
+                            <depends><adapter><fieldset>general</fieldset><value>varnish</value></adapter></depends>
+                        </soft_purge>
+                    </fields>
+                </varnish>
+            </groups>
+        </edgecache>
+    </sections>
+</config>

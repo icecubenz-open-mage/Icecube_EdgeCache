@@ -1,0 +1,94 @@
+<?xml version="1.0"?>
+<!--
+SPDX-FileCopyrightText: 2026 Icecube
+SPDX-License-Identifier: OSL-3.0
+-->
+<config>
+    <modules>
+        <Icecube_EdgeCache>
+            <version>0.1.0</version>
+        </Icecube_EdgeCache>
+    </modules>
+    <global>
+        <models>
+            <edgecache>
+                <class>Icecube_EdgeCache_Model</class>
+            </edgecache>
+        </models>
+        <blocks>
+            <edgecache>
+                <class>Icecube_EdgeCache_Block</class>
+            </edgecache>
+        </blocks>
+        <helpers>
+            <edgecache>
+                <class>Icecube_EdgeCache_Helper</class>
+            </edgecache>
+        </helpers>
+        <!-- Adding a CDN means one class implementing the adapter interface and one node here. -->
+        <edgecache>
+            <adapters>
+                <noop>
+                    <class>edgecache/adapter_noop</class>
+                    <label>None (log purges only)</label>
+                </noop>
+                <cloudflare>
+                    <class>edgecache/adapter_cloudflare</class>
+                    <label>Cloudflare</label>
+                </cloudflare>
+                <varnish>
+                    <class>edgecache/adapter_varnish</class>
+                    <label>Varnish (xkey)</label>
+                </varnish>
+            </adapters>
+        </edgecache>
+        <!-- Purges should land within seconds of a save, so they skip the on-demand catch-all pool. -->
+        <queue>
+            <routing>
+                <edgecache>fast</edgecache>
+            </routing>
+        </queue>
+    </global>
+    <frontend>
+        <layout>
+            <updates>
+                <edgecache>
+                    <file>edgecache.xml</file>
+                </edgecache>
+            </updates>
+        </layout>
+    </frontend>
+    <default>
+        <edgecache>
+            <general>
+                <enabled>0</enabled>
+                <adapter>noop</adapter>
+                <cacheable_actions>cms_index_index
+cms_page_view
+catalog_category_view
+catalog_product_view
+blog_index_index
+blog_index_category
+blog_index_view
+catalogsearch_result_index
+cms_index_noRoute</cacheable_actions>
+                <short_ttl_actions>catalogsearch_result_index
+cms_index_noRoute</short_ttl_actions>
+                <ttl>86400</ttl>
+                <stale_while_revalidate>86400</stale_while_revalidate>
+                <stale_if_error>604800</stale_if_error>
+                <short_ttl>300</short_ttl>
+                <tag_prefix/>
+            </general>
+            <noop>
+                <log_purges>1</log_purges>
+            </noop>
+            <cloudflare>
+                <header>CDN-Cache-Control</header>
+            </cloudflare>
+            <varnish>
+                <soft_purge>0</soft_purge>
+            </varnish>
+        </edgecache>
+    </default>
+</config>

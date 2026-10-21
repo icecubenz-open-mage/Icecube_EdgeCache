@@ -118,6 +118,14 @@ it('refuses a sessionless page that sends a cookie anyway', function (): void {
         ->and(edgeHeader($response, 'X-Edge-Tags'))->toBe([]);
 });
 
+it('still hands a refused page to edgecache.js, so its forms get a real key', function (): void {
+    // The key it rendered with belongs to no session, so a POST carrying it would fail.
+    $body = HttpServer::request('GET', '/edgecache-product/?___store=default')->getContent(false);
+
+    expect($body)->toContain(Icecube_EdgeCache_Helper_Data::FORM_KEY_SENTINEL)
+        ->and(containsRealFormKey($body))->toBeFalse();
+});
+
 it('answers HEAD like GET', function (): void {
     $response = HttpServer::request('HEAD', '/edgecache-product/');
 

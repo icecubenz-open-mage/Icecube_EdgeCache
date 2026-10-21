@@ -83,6 +83,8 @@ class Icecube_EdgeCache_Model_Policy
                 Mage::log(sprintf('%s rendered without a session but %s, so it was not cached', $this->sessionlessAction, $refusal), Mage::LOG_WARNING, Icecube_EdgeCache_Model_Adapter_Noop::LOG_FILE);
             }
             $this->sendUncacheable($response);
+            // Its key may belong to no session, so let edgecache.js fetch a real one.
+            $this->replaceFormKey($response);
             return;
         }
 

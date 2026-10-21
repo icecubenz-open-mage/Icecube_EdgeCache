@@ -38,6 +38,9 @@ class Icecube_EdgeCache_Model_PendingPurges
      * purging early is harmless. A retry that isn't due is left alone, or a run of 429s
      * would retry on every new save and escalate to a purge-all within the minute.
      *
+     * Rows a dead worker had claimed are taken over too: core never redelivers them, and
+     * purging twice is harmless.
+     *
      * @param list<string> $tags the tags already going into the call
      * @return array{tags: list<string>, ids: list<int>, attempt: int}
      */
@@ -45,8 +48,19 @@ class Icecube_EdgeCache_Model_PendingPurges
     {
         $merged = array_fill_keys($tags, true);
         $ids = [];
-        $rows = $this->getConnection()->fetchAll(
-            $this->selectPending(Icecube_EdgeCache_Model_PurgeTagsMessage::class, ['message_id', 'body', 'available_at'])
+        $connection = $this->getConnection();
+        $abandonedBefore = DbTransport::abandonedBefore();
+        $rows = $connection->fetchAll(
+            $connection->select()
+                ->from($this->getTable(), ['message_id', 'body', 'available_at'])
+                ->where('queue = ?', Icecube_EdgeCache_Model_PurgeBuffer::QUEUE)
+                ->where('message_class = ?', Icecube_EdgeCache_Model_PurgeTagsMessage::class)
+                ->where(sprintf(
+                    '(%s OR (%s AND %s))',
+                    $connection->quoteInto('status = ?', DbTransport::STATUS_PENDING),
+                    $connection->quoteInto('status = ?', DbTransport::STATUS_PROCESSING),
+                    $connection->quoteInto('claimed_at < ?', $abandonedBefore),
+                ))
                 ->order('message_id ASC')
                 ->limit(self::MERGE_SCAN_LIMIT),
         );
@@ -63,7 +77,7 @@ class Icecube_EdgeCache_Model_PendingPurges
                 break;
             }
             $id = (int) $row['message_id'];
-            if (!$this->claim($id)) {
+            if (!$this->claim($id, $abandonedBefore)) {
                 continue;
             }
             $merged = $candidate;
@@ -129,18 +143,27 @@ class Icecube_EdgeCache_Model_PendingPurges
         return $message->attempt > 1 && is_string($availableAt) && $availableAt > Mage_Core_Model_Locale::nowUtc();
     }
 
-    private function claim(int $id): bool
+    /**
+     * Wins the row only if it's still pending or still abandoned, so two handlers can't both take it.
+     */
+    private function claim(int $id, string $abandonedBefore): bool
     {
+        $connection = $this->getConnection();
         $now = Mage_Core_Model_Locale::nowUtc();
 
-        return $this->getConnection()->update($this->getTable(), [
+        return $connection->update($this->getTable(), [
             'status' => DbTransport::STATUS_PROCESSING,
             'claimed_at' => $now,
             'claim_token' => bin2hex(random_bytes(16)),
             'updated_at' => $now,
         ], [
             'message_id = ?' => $id,
-            'status = ?' => DbTransport::STATUS_PENDING,
+            sprintf(
+                '(%s OR (%s AND %s))',
+                $connection->quoteInto('status = ?', DbTransport::STATUS_PENDING),
+                $connection->quoteInto('status = ?', DbTransport::STATUS_PROCESSING),
+                $connection->quoteInto('claimed_at < ?', $abandonedBefore),
+            ),
         ]) === 1;
     }
 

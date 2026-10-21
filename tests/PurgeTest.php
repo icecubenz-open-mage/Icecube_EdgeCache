@@ -249,6 +249,26 @@ it('waits as long as the CDN asks before retrying', function (): void {
     expect(is_string($availableAt) ? strtotime($availableAt . ' UTC') : false)->toBeGreaterThan(time() + 800);
 });
 
+it('takes over purges a dead worker had merged, but not ones a live worker holds', function (): void {
+    $claim = function (string $tag, string $claimedAt): void {
+        $envelope = QueueManager::dispatch(new Icecube_EdgeCache_Model_PurgeTagsMessage([$tag]), 3600, Icecube_EdgeCache_Model_PurgeBuffer::QUEUE);
+        $id = $envelope->last(Symfony\Component\Messenger\Stamp\TransportMessageIdStamp::class)?->getId();
+        expect($id)->toBeNumeric();
+        queueConnection()->update(queueTable(), [
+            'status' => Maho\Queue\Transport\DbTransport::STATUS_PROCESSING,
+            'claimed_at' => $claimedAt,
+        ], ['message_id = ?' => is_numeric($id) ? (int) $id : 0]);
+    };
+    $claim('p2', Maho\Queue\Transport\DbTransport::abandonedBefore(Maho\Queue\Transport\DbTransport::ABANDONED_AFTER_SECONDS + 60));
+    $claim('p3', Mage_Core_Model_Locale::nowUtc());
+    QueueManager::dispatch(new Icecube_EdgeCache_Model_PurgeTagsMessage(['p1']), queue: Icecube_EdgeCache_Model_PurgeBuffer::QUEUE);
+
+    work();
+
+    expect(RecordingAdapter::$calls)->toBe([['purgeTags', ['p1', 'p2']]])
+        ->and(queuedPurges(Maho\Queue\Transport\DbTransport::STATUS_PROCESSING))->toHaveCount(1);
+});
+
 it('purges everything once a purge has failed too often', function (): void {
     RecordingAdapter::$failing = true;
     QueueManager::dispatch(

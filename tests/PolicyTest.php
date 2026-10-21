@@ -116,3 +116,20 @@ it('logs a refused render once an hour per action', function (): void {
 
     expect($countLines() - $before)->toBe(1);
 });
+
+it('does not cache a sessionless render that started a session after all', function (): void {
+    // A module calling session_start() itself, which no cookie check would catch in the CLI.
+    $useCookies = ini_set('session.use_cookies', '0');
+    $cacheLimiter = ini_set('session.cache_limiter', '');
+    session_start();
+
+    try {
+        $response = sessionlessResponse(200);
+    } finally {
+        session_abort();
+        ini_set('session.use_cookies', (string) $useCookies);
+        ini_set('session.cache_limiter', (string) $cacheLimiter);
+    }
+
+    expect($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('no-store');
+});

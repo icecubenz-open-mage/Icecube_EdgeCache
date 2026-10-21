@@ -142,6 +142,15 @@ it('ignores cache cleans that carry no edge tags', function (): void {
     expect(Mage::getSingleton('edgecache/purgeBuffer')->getTags())->toBe([]);
 });
 
+it('purges from admin when only a store view has the module enabled', function (): void {
+    Mage::app()->getStore(0)?->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '0');
+    Mage::app()->setCurrentStore('admin');
+
+    Mage::app()->cleanCache(['catalog_product_7']);
+
+    expect(Mage::getSingleton('edgecache/purgeBuffer')->getTags())->toBe(['p7']);
+});
+
 it('buffers nothing while the module is disabled', function (): void {
     currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '0');
 

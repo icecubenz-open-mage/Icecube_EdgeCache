@@ -35,6 +35,15 @@ class Icecube_EdgeCache_Helper_Data extends Mage_Core_Helper_Abstract
         return Mage::getStoreConfigFlag(self::XML_PATH_ENABLED);
     }
 
+    /**
+     * For purges, which run in admin, cron and workers rather than in the store that serves
+     * the pages, so the current store says nothing about whether any page is cached.
+     */
+    public function isEnabledForAnyStore(): bool
+    {
+        return array_any(Mage::app()->getStores(), fn(Mage_Core_Model_Store $store): bool => Mage::getStoreConfigFlag(self::XML_PATH_ENABLED, $store));
+    }
+
     public function getAdapterCode(): string
     {
         return $this->getString(self::XML_PATH_ADAPTER);

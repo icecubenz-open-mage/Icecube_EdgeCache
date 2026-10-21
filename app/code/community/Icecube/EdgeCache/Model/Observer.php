@@ -110,7 +110,7 @@ class Icecube_EdgeCache_Model_Observer
     public function purgeCleanedTags(\Maho\Event\Observer $observer): void
     {
         $tags = $observer->getEvent()->getData('tags');
-        if (is_array($tags) && Mage::helper('edgecache')->isEnabled()) {
+        if (is_array($tags) && Mage::helper('edgecache')->isEnabledForAnyStore()) {
             Mage::getSingleton('edgecache/purgeBuffer')->addCacheTags($tags);
         }
     }
@@ -124,7 +124,7 @@ class Icecube_EdgeCache_Model_Observer
         $item = $observer->getEvent()->getData('item');
         if (!$item instanceof Mage_CatalogInventory_Model_Stock_Item
             || !$item->dataHasChangedFor('is_in_stock')
-            || !Mage::helper('edgecache')->isEnabled()
+            || !Mage::helper('edgecache')->isEnabledForAnyStore()
         ) {
             return;
         }
@@ -137,7 +137,7 @@ class Icecube_EdgeCache_Model_Observer
     public function purgeReviewedProduct(\Maho\Event\Observer $observer): void
     {
         $review = $observer->getEvent()->getData('object');
-        if (!$review instanceof Mage_Review_Model_Review || !Mage::helper('edgecache')->isEnabled()) {
+        if (!$review instanceof Mage_Review_Model_Review || !Mage::helper('edgecache')->isEnabledForAnyStore()) {
             return;
         }
 
@@ -156,7 +156,7 @@ class Icecube_EdgeCache_Model_Observer
     #[Maho\Config\Observer('directory_currency_rates_save_after', id: 'edgecache_purge_all_on_rates')]
     public function purgeAll(\Maho\Event\Observer $observer): void
     {
-        if (Mage::helper('edgecache')->isEnabled()) {
+        if (Mage::helper('edgecache')->isEnabledForAnyStore()) {
             Mage::getSingleton('edgecache/purgeBuffer')->addAll();
         }
     }

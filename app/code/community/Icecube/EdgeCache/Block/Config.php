@@ -16,10 +16,13 @@ class Icecube_EdgeCache_Block_Config extends Mage_Core_Block_Abstract
      * edgecache.js is deferred so it doesn't block render, which leaves a gap before it runs
      * where a click could post the sentinel. This queues any click or submit that would carry
      * one into window.EDGECACHE_HELD, and edgecache.js replays them once it has a real key.
+     * Deferred scripts have run, or failed to load, by DOMContentLoaded, so if edgecache.js
+     * hasn't taken the queue by then the guard replays it as is: the post carries the
+     * sentinel and core shows its invalid form key message, rather than the click vanishing.
      * The sentinel is split so the page doesn't look as if it carries one.
      */
     private const GUARD = <<<'JS'
-        (()=>{const q=window.EDGECACHE_HELD=[],h=e=>{if(window.EDGECACHE_HELD!==q||e.button>0||e.ctrlKey||e.metaKey||e.shiftKey||e.altKey||!(e.target instanceof Element))return;const t=e.type==='submit'?e.target:e.target.closest('a,button,input[type=submit],input[type=image],[onclick],[data-params]'),f=t&&(t.form||t.closest('form'));if(t&&(t.outerHTML+(f?f.outerHTML:'')).includes('__EDGE'+'FK__')){e.preventDefault();e.stopImmediatePropagation();q.push([e.type,t,e.submitter])}};addEventListener('click',h,true);addEventListener('submit',h,true)})();
+        (()=>{const q=window.EDGECACHE_HELD=[],h=e=>{if(window.EDGECACHE_HELD!==q||e.button>0||e.ctrlKey||e.metaKey||e.shiftKey||e.altKey||!(e.target instanceof Element))return;const t=e.type==='submit'?e.target:e.target.closest('a,button,input[type=submit],input[type=image],[onclick],[data-params]'),f=t&&(t.form||t.closest('form'));if(t&&(t.outerHTML+(f?f.outerHTML:'')).includes('__EDGE'+'FK__')){e.preventDefault();e.stopImmediatePropagation();q.push([e.type,t,e.submitter])}};addEventListener('click',h,true);addEventListener('submit',h,true);addEventListener('DOMContentLoaded',()=>{if(window.EDGECACHE_HELD!==q)return;window.EDGECACHE_HELD=null;for(const[y,t,s]of q)y==='submit'?t.requestSubmit(s??undefined):t.click()})})();
         JS;
 
     #[\Override]

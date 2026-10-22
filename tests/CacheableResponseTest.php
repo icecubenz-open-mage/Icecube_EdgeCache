@@ -176,7 +176,9 @@ it('loads edgecache.js without blocking render, with an inline guard in the head
         ->and(preg_match('#<script src="[^"]*/js/edgecache\.js"[^>]*\bdefer\b#', (string) $head))->toBe(1)
         ->and(preg_match('#<script src="[^"]*/js/edgecache\.js"(?![^>]*\bdefer\b)#', $body))->toBe(0)
         ->and((string) $head)->toContain('window.EDGECACHE_HELD')
-        ->and((string) $head)->toContain('window.EDGECACHE_STATE_URL');
+        ->and((string) $head)->toContain('window.EDGECACHE_STATE_URL')
+        // If edgecache.js never runs, the guard lets held actions through so core can complain.
+        ->and((string) $head)->toContain("addEventListener('DOMContentLoaded'");
 });
 
 it('answers HEAD like GET', function (): void {

@@ -3,7 +3,7 @@
 /**
  * Cloudflare: CDN-Cache-Control for the edge TTL, Cache-Tag for tags, the zone purge API.
  *
- * HTML is only cached once a Cache Rule makes it eligible; see docs/design/edge-cache.md.
+ * HTML is only cached once a Cache Rule makes it eligible; see README.md.
  *
  * SPDX-FileCopyrightText: 2026 Icecube
  * SPDX-License-Identifier: OSL-3.0

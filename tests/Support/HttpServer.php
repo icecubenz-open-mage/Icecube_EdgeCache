@@ -30,8 +30,7 @@ final class HttpServer
     private static string $baseUrl = '';
 
     /**
-     * One server per process: a test file asking for different config would need a restart,
-     * which none do yet.
+     * One server per process, so the config passed by the first call holds for the whole run.
      *
      * @param array<string, string> $config config paths for the default store view, server only
      */

@@ -46,9 +46,6 @@ class Icecube_EdgeCache_Model_Policy
         return $this->sessionlessAction !== null;
     }
 
-    /**
-     * The last chance to change headers, after every other observer has had its say.
-     */
     public function applyToResponse(Mage_Core_Controller_Response_Http $response): void
     {
         $helper = Mage::helper('edgecache');

@@ -21,6 +21,8 @@
     let pending = null;
     let settled = false;
     let shared = null;
+    // Controls and forms already held, so a second click while waiting isn't replayed twice
+    const waiting = new WeakSet();
 
     function keySelector() {
         return [...KEY_ATTRIBUTES.map((name) => `[${name}]`), 'input[name="form_key"]'].join(', ');
@@ -143,7 +145,14 @@
         const el = event.target.closest(ACTIONABLE);
         event.preventDefault();
         event.stopImmediatePropagation();
-        hydrate().then(() => el.click());
+        if (waiting.has(el)) {
+            return;
+        }
+        waiting.add(el);
+        hydrate().then(() => {
+            waiting.delete(el);
+            el.click();
+        });
     }
 
     function holdSubmit(event) {
@@ -153,7 +162,14 @@
         }
         event.preventDefault();
         event.stopImmediatePropagation();
-        hydrate().then(() => form.requestSubmit(event.submitter ?? undefined));
+        if (waiting.has(form)) {
+            return;
+        }
+        waiting.add(form);
+        hydrate().then(() => {
+            waiting.delete(form);
+            form.requestSubmit(event.submitter ?? undefined);
+        });
     }
 
     document.addEventListener('pointerdown', startOnIntent, true);

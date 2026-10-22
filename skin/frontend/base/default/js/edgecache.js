@@ -22,10 +22,15 @@
     let settled = false;
     let shared = null;
 
-    // Only a page rendered for the edge carries the sentinel, and it always has one
-    // (the minicart script holds the form key), so this tells cached pages apart.
+    function keySelector() {
+        return [...KEY_ATTRIBUTES.map((name) => `[${name}]`), 'input[name="form_key"]'].join(', ');
+    }
+
+    // Only a page rendered for the edge carries the sentinel. Looking only where it gets
+    // swapped avoids serialising the whole DOM on the first click.
     function isSharedPage() {
-        shared ??= document.documentElement.innerHTML.includes(SENTINEL);
+        shared ??= window.minicart?.formKey === SENTINEL
+            || Array.from(document.querySelectorAll(keySelector())).some(hasSentinel);
         return shared;
     }
 
@@ -64,8 +69,7 @@
 
     function replaceSentinel(formKey) {
         const everywhere = new RegExp(FORM_KEY_CONTEXT, 'g');
-        const selector = [...KEY_ATTRIBUTES.map((name) => `[${name}]`), 'input[name="form_key"]'].join(', ');
-        for (const el of document.querySelectorAll(selector)) {
+        for (const el of document.querySelectorAll(keySelector())) {
             for (const attr of keyAttributes(el)) {
                 if (FORM_KEY_CONTEXT.test(attr.value)) {
                     el.setAttribute(attr.name, attr.value.replace(everywhere, (match, prefix) => prefix + formKey));

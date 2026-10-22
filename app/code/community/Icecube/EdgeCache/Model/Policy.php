@@ -15,6 +15,7 @@ class Icecube_EdgeCache_Model_Policy
     public const REFUSAL_LOG_LIMITER = 'edgecache_refusal_log';
 
     public const BROWSER_CACHE_CONTROL = 'public, max-age=0, must-revalidate';
+    public const PRIVATE_CACHE_CONTROL = 'private, no-store';
 
     /**
      * Product images resized on first request. A page cached before the file existed keeps
@@ -24,7 +25,6 @@ class Icecube_EdgeCache_Model_Policy
 
     /** No purge reaches a browser, and the URL only appears until the static file exists */
     public const IMAGE_BROWSER_MAX_AGE = 3600;
-    public const PRIVATE_CACHE_CONTROL = 'private, no-store';
 
     /** Full action name of a request rendering without a session, null for every other request */
     private ?string $sessionlessAction = null;

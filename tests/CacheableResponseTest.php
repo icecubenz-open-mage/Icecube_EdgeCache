@@ -15,6 +15,15 @@ afterEach(function (): void {
     removeResizeFixture();
 });
 
+dataset('bypass cookies', [
+    'session' => 'maho_session=' . str_repeat('a', 32),
+    'legacy session' => 'frontend=' . str_repeat('a', 32),
+    'older legacy session' => 'om_frontend=' . str_repeat('a', 32),
+    'store view switch' => 'store=default',
+    'cookie consent' => 'user_allowed_save_cookie=' . rawurlencode('{"1":1}'),
+    'accessibility scan' => 'maho_a11y_scan=' . str_repeat('a', 32),
+]);
+
 /**
  * @return list<string>
  */
@@ -101,14 +110,7 @@ it('leaves the response private when a request cookie can change the page', func
         ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store'])
         ->and(edgeHeader($response, 'X-Edge-Tags'))->toBe([])
         ->and($response->getContent(false))->not->toContain(Icecube_EdgeCache_Helper_Data::FORM_KEY_SENTINEL);
-})->with([
-    'session' => 'maho_session=' . str_repeat('a', 32),
-    'legacy session' => 'frontend=' . str_repeat('a', 32),
-    'older legacy session' => 'om_frontend=' . str_repeat('a', 32),
-    'store view switch' => 'store=default',
-    'cookie consent' => 'user_allowed_save_cookie=' . rawurlencode('{"1":1}'),
-    'accessibility scan' => 'maho_a11y_scan=' . str_repeat('a', 32),
-]);
+})->with('bypass cookies');
 
 it('refuses a sessionless page that sends a cookie anyway', function (): void {
     // Naming the default store view makes core delete the store cookie, a Set-Cookie
@@ -186,6 +188,25 @@ it('serves a resized product image without a session, cacheable at the edge', fu
         ->and(edgeHeader($response, 'Cache-Control'))->toBe(['max-age=86400, public'])
         ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['max-age=86400, stale-while-revalidate=86400, stale-if-error=604800'])
         ->and(edgeHeader($response, 'X-Edge-Tags'))->toBe([]);
+});
+
+it('serves a resized image without a session to a visitor holding a bypass cookie', function (string $cookie): void {
+    // The image is the same for everyone, and a session holder's parallel image requests
+    // would otherwise queue on the session lock.
+    $response = HttpServer::request('GET', '/core/index/resize/?' . resizeQuery(), ['Cookie' => $cookie]);
+
+    expect($response->getStatusCode())->toBe(200)
+        ->and(edgeHeader($response, 'Set-Cookie'))->toBe([])
+        ->and(edgeHeader($response, 'Cache-Control'))->toBe(['max-age=86400, public'])
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['max-age=86400, stale-while-revalidate=86400, stale-if-error=604800']);
+})->with('bypass cookies');
+
+it('does not cache a resize request missing its signature', function (): void {
+    $response = HttpServer::request('GET', '/core/index/resize/?t=x');
+
+    expect($response->getStatusCode())->toBe(400)
+        ->and(edgeHeader($response, 'Set-Cookie'))->toBe([])
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store']);
 });
 
 it('does not cache a resize request with a bad signature', function (): void {

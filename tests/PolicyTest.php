@@ -133,3 +133,19 @@ it('does not cache a sessionless render that started a session after all', funct
 
     expect($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('no-store');
 });
+
+it('leaves image resizing alone while the module is disabled', function (): void {
+    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '0');
+    $request = new Mage_Core_Controller_Request_Http(Request::create('http://localhost/core/index/resize/', 'GET'));
+    $request->setRouteName('core')->setControllerName('index')->setActionName('resize');
+    $response = new Mage_Core_Controller_Response_Http();
+    $policy = Mage::getSingleton('edgecache/policy');
+
+    $policy->prepareSession(new Mage_Core_Controller_Front_Action($request, $response));
+    $response->setHttpResponseCode(200)->setHeader('Content-Type', 'image/png', true);
+    $policy->applyToResponse($response);
+
+    expect($policy->isSessionless())->toBeFalse()
+        ->and($response->getSymfonyResponse()->headers->has('X-Edge-Cache-Control'))->toBeFalse()
+        ->and($response->getSymfonyResponse()->headers->get('Cache-Control'))->not->toContain('public');
+});

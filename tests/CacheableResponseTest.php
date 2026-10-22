@@ -126,6 +126,48 @@ it('still hands a refused page to edgecache.js, so its forms get a real key', fu
         ->and(containsRealFormKey($body))->toBeFalse();
 });
 
+/**
+ * A signed core/index/resize query for a small PNG, as Mage_Catalog_Helper_Image builds
+ * one when the resized file doesn't exist yet.
+ */
+function resizeQuery(): string
+{
+    $media = Mage::getSingleton('catalog/product_media_config')->getBaseMediaPath();
+    if (!is_dir($media . '/e/d')) {
+        mkdir($media . '/e/d', 0o777, true);
+    }
+    $image = imagecreatetruecolor(40, 40);
+    imagepng($image, $media . '/e/d/edgecache.png');
+
+    $model = Mage::getModel('catalog/product_image')
+        ->setDestinationSubdir('small_image')
+        ->setWidth(20)
+        ->setHeight(20)
+        ->setBaseFile('/e/d/edgecache.png');
+
+    return Maho::signImageResizeRequest($model->getTransformParams(), Mage::getEncryptionKeyAsHex());
+}
+
+it('serves a resized product image without a session, cacheable at the edge', function (): void {
+    // A cached page keeps the resize URL it was rendered with, so every visitor fetches it.
+    $response = HttpServer::request('GET', '/core/index/resize/?' . resizeQuery());
+
+    expect($response->getStatusCode())->toBe(200)
+        ->and(edgeHeader($response, 'Content-Type')[0] ?? '')->toStartWith('image/')
+        ->and(edgeHeader($response, 'Set-Cookie'))->toBe([])
+        ->and(edgeHeader($response, 'Cache-Control'))->toBe(['max-age=86400, public'])
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['max-age=86400, stale-while-revalidate=86400, stale-if-error=604800'])
+        ->and(edgeHeader($response, 'X-Edge-Tags'))->toBe([]);
+});
+
+it('does not cache a resize request with a bad signature', function (): void {
+    $response = HttpServer::request('GET', '/core/index/resize/?' . preg_replace('/s=[0-9a-f]+/', 's=' . str_repeat('0', 64), resizeQuery()));
+
+    expect($response->getStatusCode())->toBe(403)
+        ->and(edgeHeader($response, 'Set-Cookie'))->toBe([])
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store']);
+});
+
 it('answers HEAD like GET', function (): void {
     $response = HttpServer::request('HEAD', '/edgecache-product/');
 

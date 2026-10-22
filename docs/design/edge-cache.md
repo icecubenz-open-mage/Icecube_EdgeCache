@@ -258,12 +258,19 @@ The module never adds a `Vary` beyond what core sends. Core ContentNegotiation s
 
 So the Policy removes `Accept` from `Vary` on cacheable HTML and makes markdown negotiated on a non-`.md` URL `private, no-store`. Markdown clients get HTML from the edge and can follow `Link: rel="alternate"` to the `.md` URL.
 
+### Resized images
+
+Core serves a product image that hasn't been resized yet through `core/index/resize/?t=...&s=...`, then switches the HTML to the static `media/catalog/product/cache/...` path once the file exists. A page the edge cached before that keeps the resize URL for its whole TTL, so every visitor fetches it. It's a front action, so each fetch used to start `maho_session`, and from then on the visitor bypassed the edge.
+
+`core_index_resize` is always rendered sessionless, bypass cookie or not, since an image is the same for everyone. A 200 `image/*` response gets `Cache-Control: public, max-age=<ttl>` and the adapter's cacheable headers with no tags. The URL is signed over the source file and transform, and a replaced image gets a new file name, so the bytes behind a URL never change and nothing needs a tag; a purge-all still clears them. A bad signature (403), a missing file or a cookie set anyway gets the uncacheable headers.
+
 ## Header rules
 
 | Case | Browser `Cache-Control` | Edge TTL (adapter header) | Tags |
 |---|---|---|---|
 | GET or HEAD, allowlisted, no session cookie, no session started, 200 HTML | `public, max-age=0, must-revalidate` | `edgecache/general/ttl` (86400), SWR 86400, SIE 604800 | yes |
 | `catalogsearch_result_index`, `cms_index_noRoute`, any 404 | same | `short_ttl` (300) | yes |
+| `core_index_resize`, 200 `image/*` | `public, max-age=<ttl>` | `edgecache/general/ttl` | no |
 | Allowlisted, but the request carries a bypass cookie | core default | `getUncacheableHeaders()` | no |
 | Markdown on a non-`.md` URL | `private, no-store` | `getUncacheableHeaders()` | no |
 | `/edgecache/state`, POST, checkout, customer, cart | `private, no-store` or core default | `getUncacheableHeaders()` | no |

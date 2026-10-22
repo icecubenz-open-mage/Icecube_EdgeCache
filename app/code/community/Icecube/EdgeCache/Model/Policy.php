@@ -15,6 +15,12 @@ class Icecube_EdgeCache_Model_Policy
     public const REFUSAL_LOG_LIMITER = 'edgecache_refusal_log';
 
     public const BROWSER_CACHE_CONTROL = 'public, max-age=0, must-revalidate';
+
+    /**
+     * Product images resized on first request. A page cached before the file existed keeps
+     * this URL for its whole TTL, and the action starts a session it never uses.
+     */
+    public const IMAGE_RESIZE_ACTION = 'core_index_resize';
     public const PRIVATE_CACHE_CONTROL = 'private, no-store';
 
     /** Full action name of a request rendering without a session, null for every other request */
@@ -66,6 +72,11 @@ class Icecube_EdgeCache_Model_Policy
             return;
         }
 
+        if ($this->sessionlessAction === self::IMAGE_RESIZE_ACTION) {
+            $this->applyToImage($response);
+            return;
+        }
+
         // Markdown at a .md URL is left to the origin: it is often served from Maho's own cache
         // before any entity loads, so it would carry no tag to purge it by.
         if (!$this->isCacheableStatus($response->getHttpResponseCode()) || $response->isRedirect() || !$this->isHtml($response)) {
@@ -110,6 +121,35 @@ class Icecube_EdgeCache_Model_Policy
         }
         $this->removeAcceptFromVary($response);
         $this->replaceFormKey($response);
+    }
+
+    /**
+     * The URL is signed over the source file and transform, and a replaced image gets a new
+     * file name, so the bytes behind it never change. No tag: purge-all still reaches it.
+     */
+    private function applyToImage(Mage_Core_Controller_Response_Http $response): void
+    {
+        $helper = Mage::helper('edgecache');
+        $ttl = $helper->getTtl(self::IMAGE_RESIZE_ACTION);
+        $type = (string) $response->getSymfonyResponse()->headers->get('Content-Type');
+        if ($response->getHttpResponseCode() !== 200 || !str_starts_with($type, 'image/') || $ttl->maxAge <= 0
+            || session_status() === PHP_SESSION_ACTIVE || $this->hasCookie($response)
+        ) {
+            $this->sendUncacheable($response);
+            return;
+        }
+
+        try {
+            $adapter = $helper->getAdapter();
+        } catch (RuntimeException $e) {
+            Mage::logException($e);
+            return;
+        }
+
+        $response->setHeader('Cache-Control', sprintf('public, max-age=%d', $ttl->maxAge), true);
+        foreach ($adapter->getCacheableHeaders($ttl, []) as $name => $value) {
+            $response->setHeader($name, $value, true);
+        }
     }
 
     /**
@@ -227,11 +267,15 @@ class Icecube_EdgeCache_Model_Policy
         }
 
         $request = $action->getRequest();
-        if (!in_array($request->getMethod(), ['GET', 'HEAD'], true) || $this->hasBypassCookie()) {
+        if (!in_array($request->getMethod(), ['GET', 'HEAD'], true)) {
             return false;
         }
+        // An image is the same for every visitor, bypass cookie or not.
+        if ($action->getFullActionName() === self::IMAGE_RESIZE_ACTION) {
+            return true;
+        }
 
-        return $helper->isCacheableAction($action->getFullActionName());
+        return !$this->hasBypassCookie() && $helper->isCacheableAction($action->getFullActionName());
     }
 
     private function hasBypassCookie(): bool

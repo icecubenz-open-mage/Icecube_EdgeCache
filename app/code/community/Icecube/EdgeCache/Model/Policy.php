@@ -21,6 +21,9 @@ class Icecube_EdgeCache_Model_Policy
      * this URL for its whole TTL, and the action starts a session it never uses.
      */
     public const IMAGE_RESIZE_ACTION = 'core_index_resize';
+
+    /** No purge reaches a browser, and the URL only appears until the static file exists */
+    public const IMAGE_BROWSER_MAX_AGE = 3600;
     public const PRIVATE_CACHE_CONTROL = 'private, no-store';
 
     /** Full action name of a request rendering without a session, null for every other request */
@@ -125,7 +128,9 @@ class Icecube_EdgeCache_Model_Policy
 
     /**
      * The URL is signed over the source file and transform, and a replaced image gets a new
-     * file name, so the bytes behind it never change. No tag: purge-all still reaches it.
+     * file name, so the bytes behind it rarely change. Image format and quality settings
+     * aren't in the signature, so a config save or an image cache flush purges everything.
+     * No tag: purge-all still reaches it.
      */
     private function applyToImage(Mage_Core_Controller_Response_Http $response): void
     {
@@ -146,7 +151,7 @@ class Icecube_EdgeCache_Model_Policy
             return;
         }
 
-        $response->setHeader('Cache-Control', sprintf('public, max-age=%d', $ttl->maxAge), true);
+        $response->setHeader('Cache-Control', sprintf('public, max-age=%d', min($ttl->maxAge, self::IMAGE_BROWSER_MAX_AGE)), true);
         foreach ($adapter->getCacheableHeaders($ttl, []) as $name => $value) {
             $response->setHeader($name, $value, true);
         }

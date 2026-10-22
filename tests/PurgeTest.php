@@ -355,11 +355,11 @@ it('purges the reviewed product', function (): void {
     expect(Mage::getSingleton('edgecache/purgeBuffer')->getTags())->toContain('p' . $ids['product']);
 });
 
-it('purges everything when catalogue rules are applied or store config is saved', function (string $event): void {
+it('purges everything when catalogue rules are applied, store config is saved or the image cache is flushed', function (string $event): void {
     Mage::dispatchEvent($event);
 
     expect(Mage::getSingleton('edgecache/purgeBuffer')->isPurgingAll())->toBeTrue();
-})->with(['catalogrule_before_apply', 'admin_system_config_section_save_after']);
+})->with(['catalogrule_before_apply', 'admin_system_config_section_save_after', 'clean_catalog_images_cache_after']);
 
 it('purges the products an import touched', function (): void {
     $adapter = new class extends Mage_ImportExport_Model_Import_Entity_Product {

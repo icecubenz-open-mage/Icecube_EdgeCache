@@ -262,7 +262,7 @@ So the Policy removes `Accept` from `Vary` on cacheable HTML and makes markdown 
 
 Core serves a product image that hasn't been resized yet through `core/index/resize/?t=...&s=...`, then switches the HTML to the static `media/catalog/product/cache/...` path once the file exists. A page the edge cached before that keeps the resize URL for its whole TTL, so every visitor fetches it. It's a front action, so each fetch used to start `maho_session`, and from then on the visitor bypassed the edge.
 
-`core_index_resize` is always rendered sessionless, bypass cookie or not, since an image is the same for everyone. A 200 `image/*` response gets `Cache-Control: public, max-age=<ttl>` and the adapter's cacheable headers with no tags. The URL is signed over the source file and transform, and a replaced image gets a new file name, so the bytes behind a URL never change and nothing needs a tag; a purge-all still clears them. A bad signature (403), a missing file or a cookie set anyway gets the uncacheable headers.
+`core_index_resize` is always rendered sessionless, bypass cookie or not, since an image is the same for everyone. A 200 `image/*` response gets `Cache-Control: public, max-age=3600` (or the TTL, if that's shorter) and the adapter's cacheable headers with no tags. The URL is signed over the source file and transform, and a replaced image gets a new file name, so the bytes behind a URL rarely change. They can: the output format and image quality settings aren't in the signature. A config save or a Flush Catalog Images Cache (`clean_catalog_images_cache_after`) purges everything, which reaches these untagged objects. No purge reaches a browser, hence the hour, and the URL only appears until the static file exists anyway. A bad signature (403), a missing file or a cookie set anyway gets the uncacheable headers.
 
 ## Header rules
 
@@ -270,12 +270,12 @@ Core serves a product image that hasn't been resized yet through `core/index/res
 |---|---|---|---|
 | GET or HEAD, allowlisted, no session cookie, no session started, 200 HTML | `public, max-age=0, must-revalidate` | `edgecache/general/ttl` (86400), SWR 86400, SIE 604800 | yes |
 | `catalogsearch_result_index`, `cms_index_noRoute`, any 404 | same | `short_ttl` (300) | yes |
-| `core_index_resize`, 200 `image/*` | `public, max-age=<ttl>` | `edgecache/general/ttl` | no |
+| `core_index_resize`, 200 `image/*` | `public, max-age=3600` (at most the TTL) | `edgecache/general/ttl` | no |
 | Allowlisted, but the request carries a bypass cookie | core default | `getUncacheableHeaders()` | no |
 | Markdown on a non-`.md` URL | `private, no-store` | `getUncacheableHeaders()` | no |
 | `/edgecache/state`, POST, checkout, customer, cart | `private, no-store` or core default | `getUncacheableHeaders()` | no |
 
-Default allowlist: `cms_index_index`, `cms_page_view`, `catalog_category_view`, `catalog_product_view`, `blog_index_index`, `blog_index_category`, `blog_index_view`, `catalogsearch_result_index`, `cms_index_noRoute`.
+Default allowlist: `cms_index_index`, `cms_page_view`, `catalog_category_view`, `catalog_product_view`, `blog_index_index`, `blog_index_category`, `blog_index_view`, `catalogsearch_result_index`, `cms_index_noRoute`. `core_index_resize` is cacheable whether it's on the list or not, so the list can't opt it out.
 
 Anyone holding a session (a guest with a cart, a logged-in customer) goes to origin, because the CDN bypasses on `maho_session`. Edge hits are for visitors without one. If the bypass rule is ever narrowed so session holders get edge hits, logged-in customers would see anonymous prices: a vary cookie (`edgecache_vary`, a hash of the customer group) would be needed first, and isn't built.
 

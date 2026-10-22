@@ -178,11 +178,13 @@ class Icecube_EdgeCache_Model_Observer
     /**
      * Rule, currency and store config changes touch pages no tag points to: prices, the header
      * and footer, contact details. Config saves clean only Maho's config and layout tags.
+     * Resized images carry no tag, so an image cache flush can only reach them this way.
      */
     #[Maho\Config\Observer('admin_system_config_section_save_after', id: 'edgecache_purge_all_on_config')]
     #[Maho\Config\Observer('adminhtml_cache_flush_all', id: 'edgecache_purge_all_on_flush')]
     #[Maho\Config\Observer('adminhtml_cache_flush_system', id: 'edgecache_purge_all_on_system_flush')]
     #[Maho\Config\Observer('catalogrule_before_apply', id: 'edgecache_purge_all_on_rules')]
+    #[Maho\Config\Observer('clean_catalog_images_cache_after', id: 'edgecache_purge_all_on_image_flush')]
     #[Maho\Config\Observer('directory_currency_rates_save_after', id: 'edgecache_purge_all_on_rates')]
     public function purgeAll(\Maho\Event\Observer $observer): void
     {

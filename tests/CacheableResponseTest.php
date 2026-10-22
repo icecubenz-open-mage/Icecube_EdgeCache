@@ -185,7 +185,7 @@ it('serves a resized product image without a session, cacheable at the edge', fu
     expect($response->getStatusCode())->toBe(200)
         ->and(edgeHeader($response, 'Content-Type')[0] ?? '')->toStartWith('image/')
         ->and(edgeHeader($response, 'Set-Cookie'))->toBe([])
-        ->and(edgeHeader($response, 'Cache-Control'))->toBe(['max-age=86400, public'])
+        ->and(edgeHeader($response, 'Cache-Control'))->toBe(['max-age=3600, public'])
         ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['max-age=86400, stale-while-revalidate=86400, stale-if-error=604800'])
         ->and(edgeHeader($response, 'X-Edge-Tags'))->toBe([]);
 });
@@ -197,7 +197,7 @@ it('serves a resized image without a session to a visitor holding a bypass cooki
 
     expect($response->getStatusCode())->toBe(200)
         ->and(edgeHeader($response, 'Set-Cookie'))->toBe([])
-        ->and(edgeHeader($response, 'Cache-Control'))->toBe(['max-age=86400, public'])
+        ->and(edgeHeader($response, 'Cache-Control'))->toBe(['max-age=3600, public'])
         ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['max-age=86400, stale-while-revalidate=86400, stale-if-error=604800']);
 })->with('bypass cookies');
 

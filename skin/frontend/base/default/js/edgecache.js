@@ -134,6 +134,23 @@
         }
     }
 
+    // Never throws, so one stale entry can't drop the replays after it.
+    function replay(type, el, submitter) {
+        try {
+            if (type === 'submit') {
+                el.requestSubmit(submitter ?? undefined);
+            } else {
+                el.click();
+            }
+        } catch {
+            // requestSubmit() refuses a submitter that's no longer in the form, as when an
+            // options script re-renders the button while the key is on its way.
+            if (type === 'submit') {
+                el.requestSubmit();
+            }
+        }
+    }
+
     // Capture phase, so an inline onclick (customFormSubmit, productAddToCartForm.submit)
     // never runs with the sentinel still in place; the click is replayed once hydrated.
     function holdClick(event) {
@@ -151,7 +168,7 @@
         waiting.add(el);
         hydrate().then(() => {
             waiting.delete(el);
-            el.click();
+            replay('click', el);
         });
     }
 
@@ -168,7 +185,7 @@
         waiting.add(form);
         hydrate().then(() => {
             waiting.delete(form);
-            form.requestSubmit(event.submitter ?? undefined);
+            replay('submit', form, event.submitter);
         });
     }
 
@@ -186,11 +203,7 @@
         }
         hydrate().then(() => {
             for (const [type, el, submitter] of held) {
-                if (type === 'submit') {
-                    el.requestSubmit(submitter ?? undefined);
-                } else {
-                    el.click();
-                }
+                replay(type, el, submitter);
             }
         });
     }

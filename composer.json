@@ -1,6 +1,6 @@
 {
     "name": "icecube/edge-cache",
-    "description": "CDN-agnostic edge caching for Maho: cookieless anonymous pages, cache tags and queued purges",
+    "description": "CDN-agnostic edge caching for Maho: caches the pages core renders without a session, with cache tags and queued purges",
     "license": "OSL-3.0",
     "type": "maho-module",
     "authors": [
@@ -10,8 +10,8 @@
     ],
     "require": {
         "php": ">=8.5",
-        "mahocommerce/maho": "^26.9.2",
-        "symfony/http-client": "^7.4"
+        "mahocommerce/maho": "^26.9 || dev-main",
+        "symfony/http-client": "^7.4 || ^8.1"
     },
     "autoload-dev": {
         "psr-4": {

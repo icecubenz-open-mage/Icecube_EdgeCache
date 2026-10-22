@@ -326,7 +326,7 @@ it('purges the product and the categories listing it when it goes out of stock',
 
         expect(Mage::getSingleton('edgecache/purgeBuffer')->getTags())->toBe(['p' . $ids['product'], 'c' . $ids['category']]);
     } finally {
-        $stockItem->setQty(100)->setIsInStock(1)->save();
+        $stockItem->setQty(100)->setIsInStock(true)->save();
     }
 });
 
@@ -367,7 +367,7 @@ it('purges the products an import touched', function (): void {
 
         /** @return list<int|string> */
         #[\Override]
-        public function getAffectedEntityIds(): array
+        public function getAffectedEntityIds(bool $withImagesOnly = false): array
         {
             return [3, '4'];
         }

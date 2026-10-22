@@ -10,12 +10,16 @@ declare(strict_types=1);
 
 class Icecube_EdgeCache_Model_Observer
 {
-    #[Maho\Config\Observer('controller_action_predispatch_session_start', id: 'edgecache_prepare_session')]
-    public function prepareSession(\Maho\Event\Observer $observer): void
+    /**
+     * Fires for every action, forwards and core's image resize included, before the session
+     * would start.
+     */
+    #[Maho\Config\Observer('controller_action_predispatch_session_start', id: 'edgecache_set_action')]
+    public function setAction(\Maho\Event\Observer $observer): void
     {
         $action = $observer->getEvent()->getData('controller_action');
         if ($action instanceof Mage_Core_Controller_Varien_Action) {
-            Mage::getSingleton('edgecache/policy')->prepareSession($action);
+            Mage::getSingleton('edgecache/policy')->setAction($action);
         }
     }
 
@@ -29,24 +33,6 @@ class Icecube_EdgeCache_Model_Observer
         if ($response instanceof Mage_Core_Controller_Response_Http) {
             Mage::getSingleton('edgecache/policy')->applyToResponse($response);
         }
-    }
-
-    /**
-     * Lets edgecache.js on a cached page tell whether this visitor has a session worth hydrating.
-     */
-    #[Maho\Config\Observer('session_before_renew_cookie', id: 'edgecache_set_marker_cookie')]
-    public function setMarkerCookie(\Maho\Event\Observer $observer): void
-    {
-        $event = $observer->getEvent();
-        $cookie = $event->getData('cookie');
-        if (!$cookie instanceof Mage_Core_Model_Cookie
-            || $event->getData('session_name') !== Mage_Core_Controller_Front_Action::SESSION_NAMESPACE
-            || !Mage::helper('edgecache')->isEnabled()
-        ) {
-            return;
-        }
-
-        $cookie->set(Icecube_EdgeCache_Helper_Data::MARKER_COOKIE, '1', null, null, null, null, false);
     }
 
     #[Maho\Config\Observer('model_load_after', id: 'edgecache_collect_model_tags')]

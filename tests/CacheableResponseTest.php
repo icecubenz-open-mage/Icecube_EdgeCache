@@ -6,15 +6,22 @@ use Icecube\EdgeCache\Tests\Support\HttpServer;
 use Icecube\EdgeCache\Tests\Support\Catalogue;
 use Symfony\Contracts\HttpClient\ResponseInterface;
 
+const SERVER_CONFIG = [
+    'edgecache/general/enabled' => '1',
+    'web/sessionless/enabled' => '1',
+    'web/sessionless/routes' => "cms/index/index\ncms/page/view\ncatalog/category/view\ncatalog/product/view\ncatalogsearch/result/index\ncms/index/noRoute",
+];
+
 beforeEach(function (): void {
     Catalogue::ensure();
-    HttpServer::start(['edgecache/general/enabled' => '1']);
+    HttpServer::start(SERVER_CONFIG);
 });
 
 afterEach(function (): void {
     removeResizeFixture();
 });
 
+// The session cookies, then core's default web/sessionless/cookies
 dataset('bypass cookies', [
     'session' => 'maho_session=' . str_repeat('a', 32),
     'legacy session' => 'frontend=' . str_repeat('a', 32),
@@ -34,14 +41,14 @@ function edgeHeader(ResponseInterface $response, string $name): array
 
 /**
  * A real key is 16 alphanumerics wherever core prints one: an input value, a JSON
- * data-params blob (HTML-escaped) or a /form_key/ URL segment.
+ * data-params blob (HTML-escaped), a /form_key/ URL segment or the FORM_KEY global.
  */
 function containsRealFormKey(string $body): bool
 {
-    return preg_match('#(form_key(&quot;:&quot;|/|"\s+value=")|formKey:\s*")(?!__EDGEFK__)[A-Za-z0-9]{16}#', $body) === 1;
+    return preg_match('#(form_key(&quot;:&quot;|/|=|"\s+value=")|formKey:\s*"|FORM_KEY = \')[A-Za-z0-9]{16}#', $body) === 1;
 }
 
-it('serves an allowlisted page without a session, cacheable and tagged', function (string $path, string $tagType, string $idKey): void {
+it('caches a page core rendered without a session, tagged', function (string $path, string $tagType, string $idKey): void {
     $ids = Catalogue::ensure();
     $tag = $tagType . ($idKey === 'home'
         ? (int) Mage::getModel('cms/page')->load('home', 'identifier')->getId()
@@ -55,7 +62,7 @@ it('serves an allowlisted page without a session, cacheable and tagged', functio
         ->and(edgeHeader($response, 'Cache-Control'))->toBe(['max-age=0, must-revalidate, public'])
         ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['max-age=86400, stale-while-revalidate=86400, stale-if-error=604800'])
         ->and(explode(',', edgeHeader($response, 'X-Edge-Tags')[0] ?? ''))->toContain($tag)
-        ->and($body)->toContain(Icecube_EdgeCache_Helper_Data::FORM_KEY_SENTINEL)
+        ->and($body)->toContain("FORM_KEY = ''")
         ->and(containsRealFormKey($body))->toBeFalse();
 })->with([
     'home' => ['/', 'cp', 'home'],
@@ -102,14 +109,23 @@ it('gives search results and 404s the short TTL', function (string $path, int $s
     '404' => ['/no-such-page/', 404],
 ]);
 
+it('does not cache a missing product, which core names catalog/index/noRoute after the forward', function (): void {
+    // getFullActionName() keeps the requested route but takes the forwarded controller and
+    // action, so neither core's list nor this module ever matches it
+    $response = HttpServer::request('GET', '/catalog/product/view/id/999999/');
+
+    expect($response->getStatusCode())->toBe(404)
+        ->and(edgeHeader($response, 'Set-Cookie'))->toBe([])
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store']);
+});
+
 it('leaves the response private when a request cookie can change the page', function (string $cookie): void {
     $response = HttpServer::request('GET', '/edgecache-product/', ['Cookie' => $cookie]);
 
     expect($response->getStatusCode())->toBe(200)
         ->and(edgeHeader($response, 'Cache-Control')[0] ?? '')->toContain('private')
         ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store'])
-        ->and(edgeHeader($response, 'X-Edge-Tags'))->toBe([])
-        ->and($response->getContent(false))->not->toContain(Icecube_EdgeCache_Helper_Data::FORM_KEY_SENTINEL);
+        ->and(edgeHeader($response, 'X-Edge-Tags'))->toBe([]);
 })->with('bypass cookies');
 
 it('refuses a sessionless page that sends a cookie anyway', function (): void {
@@ -124,17 +140,9 @@ it('refuses a sessionless page that sends a cookie anyway', function (): void {
         ->and(edgeHeader($response, 'X-Edge-Tags'))->toBe([]);
 });
 
-it('still hands a refused page to edgecache.js, so its forms get a real key', function (): void {
-    // The key it rendered with belongs to no session, so a POST carrying it would fail.
-    $body = HttpServer::request('GET', '/edgecache-product/?___store=default')->getContent(false);
-
-    expect($body)->toContain(Icecube_EdgeCache_Helper_Data::FORM_KEY_SENTINEL)
-        ->and(containsRealFormKey($body))->toBeFalse();
-});
-
 /**
- * A signed core/index/resize query for a small PNG, as Mage_Catalog_Helper_Image builds
- * one when the resized file doesn't exist yet.
+ * A core/index/resize query for a small PNG, signed as releases before 26.11 printed it in
+ * pages that the edge may still hold.
  */
 function resizeQuery(): string
 {
@@ -144,62 +152,64 @@ function resizeQuery(): string
     }
     imagepng(imagecreatetruecolor(40, 40), $media . '/e/d/edgecache.png');
 
-    return Maho::signImageResizeRequest(resizeModel()->getTransformParams(), Mage::getEncryptionKeyAsHex());
-}
+    $t = base64_encode(json_encode(['_sourceFile' => '/e/d/edgecache.png', '_width' => 20, '_height' => 20], JSON_THROW_ON_ERROR));
 
-function resizeModel(): Mage_Catalog_Model_Product_Image
-{
-    return Mage::getModel('catalog/product_image')
-        ->setDestinationSubdir('small_image')
-        ->setWidth(20)
-        ->setHeight(20)
-        ->setBaseFile('/e/d/edgecache.png');
+    return 't=' . urlencode($t) . '&s=' . hash_hmac('sha256', $t, Mage::getEncryptionKeyAsHex());
 }
 
 /**
- * The source image and the copy the resize request wrote, which live in the store's real media folder.
+ * The source image and the resized copies, which live in the store's real media folder.
  */
 function removeResizeFixture(): void
 {
-    $source = Mage::getSingleton('catalog/product_media_config')->getBaseMediaPath() . '/e/d/edgecache.png';
-    if (!is_file($source)) {
-        return;
-    }
-    $resized = resizeModel()->getNewFile();
-    foreach ([$resized, $source] as $file) {
-        if (is_string($file) && is_file($file)) {
-            unlink($file);
+    $media = Mage::getSingleton('catalog/product_media_config')->getBaseMediaPath();
+    $files = [$media . '/e/d/edgecache.png', ...(glob($media . '/cache/*/*/e/d/edgecache.png*') ?: [])];
+    foreach ($files as $file) {
+        if (!is_file($file)) {
+            continue;
         }
-    }
-    foreach ([dirname($source), dirname($source, 2)] as $dir) {
-        if (is_dir($dir) && glob($dir . '/*') === []) {
-            rmdir($dir);
+        unlink($file);
+        foreach ([dirname($file), dirname($file, 2), dirname($file, 3), dirname($file, 4)] as $dir) {
+            if (str_starts_with($dir, $media . '/') && $dir !== $media . '/cache' && is_dir($dir) && glob($dir . '/*') === []) {
+                rmdir($dir);
+            }
         }
     }
 }
 
-it('serves a resized product image without a session, cacheable at the edge', function (): void {
-    // A cached page keeps the resize URL it was rendered with, so every visitor fetches it.
-    $response = HttpServer::request('GET', '/core/index/resize/?' . resizeQuery());
+it('redirects an old resize URL to the image without a session, and keeps the redirect out of the edge', function (string $cookie): void {
+    $response = HttpServer::request('GET', '/core/index/resize/?' . resizeQuery(), $cookie === '' ? [] : ['Cookie' => $cookie]);
+
+    expect($response->getStatusCode())->toBe(301)
+        ->and(edgeHeader($response, 'Location')[0] ?? '')->toContain('/media/catalog/product/cache/')
+        ->and(edgeHeader($response, 'Set-Cookie'))->toBe([])
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store']);
+})->with([
+    'no cookie' => '',
+    'session' => 'maho_session=' . str_repeat('a', 32),
+    'store view switch' => 'store=default',
+]);
+
+it('leaves the image core resizes on a miss as core sends it', function (): void {
+    $location = (string) parse_url(edgeHeader(HttpServer::request('GET', '/core/index/resize/?' . resizeQuery()), 'Location')[0] ?? '', PHP_URL_PATH);
+
+    $response = HttpServer::request('GET', $location);
 
     expect($response->getStatusCode())->toBe(200)
         ->and(edgeHeader($response, 'Content-Type')[0] ?? '')->toStartWith('image/')
         ->and(edgeHeader($response, 'Set-Cookie'))->toBe([])
-        ->and(edgeHeader($response, 'Cache-Control'))->toBe(['max-age=3600, public'])
-        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['max-age=86400, stale-while-revalidate=86400, stale-if-error=604800'])
-        ->and(edgeHeader($response, 'X-Edge-Tags'))->toBe([]);
+        ->and(edgeHeader($response, 'Cache-Control'))->toBe(['max-age=31536000, public'])
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe([]);
 });
 
-it('serves a resized image without a session to a visitor holding a bypass cookie', function (string $cookie): void {
-    // The image is the same for everyone, and a session holder's parallel image requests
-    // would otherwise queue on the session lock.
-    $response = HttpServer::request('GET', '/core/index/resize/?' . resizeQuery(), ['Cookie' => $cookie]);
+it('leaves core answer to an image it cannot create as core sends it', function (): void {
+    $response = HttpServer::request('GET', '/media/catalog/product/cache/0123456789ab/20/e/d/no-such-image.png');
 
-    expect($response->getStatusCode())->toBe(200)
+    expect($response->getStatusCode())->toBeIn([302, 404])
         ->and(edgeHeader($response, 'Set-Cookie'))->toBe([])
-        ->and(edgeHeader($response, 'Cache-Control'))->toBe(['max-age=3600, public'])
-        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['max-age=86400, stale-while-revalidate=86400, stale-if-error=604800']);
-})->with('bypass cookies');
+        ->and(edgeHeader($response, 'Cache-Control')[0] ?? '')->toContain('no-store')
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe([]);
+});
 
 it('does not cache a resize request missing its signature', function (): void {
     $response = HttpServer::request('GET', '/core/index/resize/?t=x');
@@ -217,19 +227,6 @@ it('does not cache a resize request with a bad signature', function (): void {
         ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store']);
 });
 
-it('loads edgecache.js without blocking render, with an inline guard in the head until it runs', function (): void {
-    $body = HttpServer::request('GET', '/')->getContent(false);
-    $head = strstr($body, '</head>', true);
-
-    expect($head)->toBeString()
-        ->and(preg_match('#<script src="[^"]*/js/edgecache\.js"[^>]*\bdefer\b#', (string) $head))->toBe(1)
-        ->and(preg_match('#<script src="[^"]*/js/edgecache\.js"(?![^>]*\bdefer\b)#', $body))->toBe(0)
-        ->and((string) $head)->toContain('window.EDGECACHE_HELD')
-        ->and((string) $head)->toContain('window.EDGECACHE_STATE_URL')
-        // If edgecache.js never runs, the guard lets held actions through so core can complain.
-        ->and((string) $head)->toContain("addEventListener('DOMContentLoaded'");
-});
-
 it('answers HEAD like GET', function (): void {
     $response = HttpServer::request('HEAD', '/edgecache-product/');
 
@@ -239,38 +236,12 @@ it('answers HEAD like GET', function (): void {
         ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['max-age=86400, stale-while-revalidate=86400, stale-if-error=604800']);
 });
 
-it('does not cache a redirect from an allowlisted action', function (): void {
+it('does not cache a redirect from a sessionless action', function (): void {
     // A search with exactly one match redirects to that product.
     $response = HttpServer::request('GET', '/catalogsearch/result/?q=' . rawurlencode('Edge Cache Product'));
 
     expect($response->getStatusCode())->toBe(302)
         ->and(edgeHeader($response, 'Cache-Control')[0] ?? '')->not->toContain('public')
-        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store']);
-});
-
-it('puts the sentinel only where edgecache.js swaps it for the key', function (string $path): void {
-    $body = HttpServer::request('GET', $path)->getContent(false);
-
-    // The places edgecache.js swaps: a form_key input's value, the minicart script, and a
-    // form_key in an href, action, onclick or data-params attribute (KEY_ATTRIBUTES there).
-    $allowed = '#(?:name="form_key"[^>]*value="|formKey:\s*"|\s(?:href|action|onclick|data-params)="[^"]*form_key(?:/|=|&quot;:&quot;))$#';
-    $offset = 0;
-    $count = 0;
-    while (($at = strpos($body, Icecube_EdgeCache_Helper_Data::FORM_KEY_SENTINEL, $offset)) !== false) {
-        $before = substr($body, max(0, $at - 200), min($at, 200));
-        expect(preg_match($allowed, $before))->toBe(1, 'Sentinel in an unexpected place: ' . substr($before, -80));
-        $offset = $at + 1;
-        $count++;
-    }
-
-    expect($count)->toBeGreaterThan(0);
-})->with(['/', '/edgecache-category/', '/edgecache-product/']);
-
-it('does not cache a page that echoes the sentinel back from the request', function (): void {
-    // edgecache.js would otherwise put the visitor's key into the search box, then the URL and Referer.
-    $response = HttpServer::request('GET', '/catalogsearch/result/?q=' . Icecube_EdgeCache_Helper_Data::FORM_KEY_SENTINEL);
-
-    expect($response->getStatusCode())->toBe(200)
         ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store']);
 });
 
@@ -282,15 +253,13 @@ it('never marks a POST cacheable', function (string $path): void {
         ->and(edgeHeader($response, 'X-Edge-Tags'))->toBe([]);
 })->with(['/', '/edgecache-product/', '/catalogsearch/result/']);
 
-it('starts a session as usual on a page that is not allowlisted', function (): void {
+it('leaves a page off core list alone', function (): void {
     $response = HttpServer::request('GET', '/customer/account/login/');
-    $cookies = implode("\n", edgeHeader($response, 'Set-Cookie'));
 
     expect($response->getStatusCode())->toBe(200)
         ->and(edgeHeader($response, 'Cache-Control')[0] ?? '')->toContain('private')
         ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store'])
-        ->and($cookies)->toContain('maho_session=')
-        ->and($cookies)->toMatch('/edgecache_s=1;(?!.*HttpOnly)/i');
+        ->and(implode("\n", edgeHeader($response, 'Set-Cookie')))->toContain('maho_session=');
 });
 
 it('takes Accept out of Vary on cacheable HTML', function (): void {
@@ -307,3 +276,34 @@ it('keeps markdown negotiated on the HTML URL out of shared caches', function ()
         ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store'])
         ->and(edgeHeader($response, 'Set-Cookie'))->toBe([]);
 });
+
+it('caches nothing while core renders every page with a session', function (string $path): void {
+    HttpServer::start(['web/sessionless/enabled' => '0'] + SERVER_CONFIG);
+
+    $response = HttpServer::request('GET', $path);
+
+    expect(edgeHeader($response, 'Cache-Control')[0] ?? '')->not->toContain('public')
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store'])
+        ->and(edgeHeader($response, 'X-Edge-Tags'))->toBe([]);
+})->with(['/', '/edgecache-category/', '/edgecache-product/']);
+
+it('caches the pages on core default route list', function (string $path): void {
+    HttpServer::start(['edgecache/general/enabled' => '1', 'web/sessionless/enabled' => '1']);
+
+    $response = HttpServer::request('GET', $path);
+
+    expect($response->getStatusCode())->toBe(200)
+        ->and(edgeHeader($response, 'Set-Cookie'))->toBe([])
+        ->and(edgeHeader($response, 'Cache-Control'))->toBe(['max-age=0, must-revalidate, public']);
+})->with(['/', '/edgecache-category/', '/edgecache-product/']);
+
+it('does not cache a 404 under core default route list', function (string $path): void {
+    // A missing product forwards from a listed action to an unlisted one
+    HttpServer::start(['edgecache/general/enabled' => '1', 'web/sessionless/enabled' => '1']);
+
+    $response = HttpServer::request('GET', $path);
+
+    expect($response->getStatusCode())->toBe(404)
+        ->and(edgeHeader($response, 'Cache-Control')[0] ?? '')->not->toContain('public')
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store']);
+})->with(['/no-such-page/', '/catalog/product/view/id/999999/']);

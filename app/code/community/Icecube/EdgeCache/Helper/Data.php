@@ -14,8 +14,6 @@ class Icecube_EdgeCache_Helper_Data extends Mage_Core_Helper_Abstract
 {
     public const XML_PATH_ENABLED = 'edgecache/general/enabled';
     public const XML_PATH_ADAPTER = 'edgecache/general/adapter';
-    public const XML_PATH_CACHEABLE_ACTIONS = 'edgecache/general/cacheable_actions';
-    public const XML_PATH_BYPASS_COOKIES = 'edgecache/general/bypass_cookies';
     public const XML_PATH_SHORT_TTL_ACTIONS = 'edgecache/general/short_ttl_actions';
     public const XML_PATH_TTL = 'edgecache/general/ttl';
     public const XML_PATH_STALE_WHILE_REVALIDATE = 'edgecache/general/stale_while_revalidate';
@@ -25,11 +23,19 @@ class Icecube_EdgeCache_Helper_Data extends Mage_Core_Helper_Abstract
     public const XML_PATH_PURGE_DELAY = 'edgecache/general/purge_delay';
     public const XML_PATH_ADAPTERS = 'global/edgecache/adapters';
 
-    /** Stands in for the per-visitor form key in shared HTML until edgecache.js swaps it */
-    public const FORM_KEY_SENTINEL = '__EDGEFK__';
+    // Core's Pages Without a Session paths, written out because a Maho without the option has no constants for them
+    public const XML_PATH_CORE_SESSIONLESS_ENABLED = 'web/sessionless/enabled';
+    public const XML_PATH_CORE_SESSIONLESS_ROUTES = 'web/sessionless/routes';
 
-    /** Readable by JS, so a cached page knows the visitor already has a session worth hydrating */
-    public const MARKER_COOKIE = 'edgecache_s';
+    /** Mage_Core_Model_Design_Package::_checkUserAgentAgainstRegexps() reads these */
+    public const XML_PATHS_DESIGN_UA_REGEXP = [
+        'design/package/ua_regexp',
+        'design/theme/locale_ua_regexp',
+        'design/theme/template_ua_regexp',
+        'design/theme/skin_ua_regexp',
+        'design/theme/layout_ua_regexp',
+        'design/theme/default_ua_regexp',
+    ];
 
     public function isEnabled(): bool
     {
@@ -67,25 +73,47 @@ class Icecube_EdgeCache_Helper_Data extends Mage_Core_Helper_Abstract
         return new Icecube_EdgeCache_Model_TagNormaliser($this->getTagPrefix());
     }
 
-    public function isCacheableAction(string $fullActionName): bool
+    /**
+     * Core's Pages Without a Session option. A Maho without the option has no such config,
+     * renders nothing sessionless, and so gets nothing cached.
+     */
+    public function isCoreSessionlessEnabled(): bool
     {
-        return in_array($fullActionName, $this->getList(self::XML_PATH_CACHEABLE_ACTIONS), true);
+        return Mage::getStoreConfigFlag(self::XML_PATH_CORE_SESSIONLESS_ENABLED);
     }
 
     /**
-     * Every cookie whose presence means the page may differ from the shared copy. The session
-     * cookies are always in it (legacy names too, since the session migrates them on start),
-     * so clearing the setting can't make sessions cacheable.
+     * Split as core splits it, one route per line, so the two never disagree about the list.
      *
-     * @return list<string>
+     * @param string $route module/controller/action
      */
-    public function getBypassCookies(): array
+    public function isCoreSessionlessRoute(string $route): bool
     {
-        return array_values(array_unique([
-            Mage_Core_Controller_Front_Action::SESSION_NAMESPACE,
-            ...Mage_Core_Controller_Front_Action::SESSION_LEGACY_NAMESPACES,
-            ...$this->getList(self::XML_PATH_BYPASS_COOKIES),
-        ]));
+        $routes = array_filter(array_map(trim(...), explode("\n", $this->getString(self::XML_PATH_CORE_SESSIONLESS_ROUTES))));
+
+        return in_array($route, $routes, true);
+    }
+
+    /**
+     * A design exception picks the theme from the User-Agent, which the edge doesn't key on.
+     */
+    public function hasDesignUserAgentExceptions(): bool
+    {
+        foreach (self::XML_PATHS_DESIGN_UA_REGEXP as $path) {
+            $value = $this->getString($path);
+            if ($value === '') {
+                continue;
+            }
+            try {
+                if (Mage::helper('core/unserializeArray')->unserialize($value) !== []) {
+                    return true;
+                }
+            } catch (Exception) {
+                // Core ignores a value it can't read, and so renders no exception for it
+            }
+        }
+
+        return false;
     }
 
     public function getTtl(string $fullActionName): Icecube_EdgeCache_Model_Ttl

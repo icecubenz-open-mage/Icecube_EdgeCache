@@ -62,7 +62,7 @@ final class Catalogue
             ->setTitle('Edge Cache Block')
             ->setIdentifier(self::CMS_BLOCK)
             ->setContent('<p>A block from the block cache</p>')
-            ->setIsActive(1)
+            ->setIsActive(true)
             ->setStores([0])
             ->save();
 
@@ -70,7 +70,7 @@ final class Catalogue
             ->setTitle('Edge Cache Page')
             ->setIdentifier(self::CMS_PAGE)
             ->setContent('<p>Cached at the edge</p>{{block id="' . self::CMS_BLOCK . '"}}')
-            ->setIsActive(1)
+            ->setIsActive(true)
             ->setStores([0])
             ->save();
 

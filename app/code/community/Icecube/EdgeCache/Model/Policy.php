@@ -18,47 +18,34 @@ class Icecube_EdgeCache_Model_Policy
     public const PRIVATE_CACHE_CONTROL = 'private, no-store';
 
     /**
-     * Product images resized on first request. A page cached before the file existed keeps
-     * this URL for its whole TTL, and the action starts a session it never uses.
+     * Core's route that writes a missing resized image. Named as a string because a Maho
+     * without the route has no such class.
      */
-    public const IMAGE_RESIZE_ACTION = 'core_index_resize';
+    public const IMAGE_CONTROLLER_CLASS = 'Mage_Core_ImageController';
 
-    /** No purge reaches a browser, and the URL only appears until the static file exists */
-    public const IMAGE_BROWSER_MAX_AGE = 3600;
-
-    /** Full action name of a request rendering without a session, null for every other request */
-    private ?string $sessionlessAction = null;
+    /** The last front action dispatched, forwards included, so the one that rendered the response */
+    private ?Mage_Core_Controller_Front_Action $action = null;
 
     private bool $frontendAction = false;
 
-    /**
-     * Runs for every action a request dispatches, forwards included, so the last one decides.
-     */
-    public function prepareSession(Mage_Core_Controller_Varien_Action $action): void
+    public function setAction(Mage_Core_Controller_Varien_Action $action): void
     {
-        $this->sessionlessAction = null;
-        if (!$action instanceof Mage_Core_Controller_Front_Action) {
-            return;
-        }
-
-        $this->frontendAction = true;
-        if (!$this->canRenderWithoutSession($action)) {
-            return;
-        }
-
-        $action->setFlag('', Mage_Core_Controller_Varien_Action::FLAG_NO_START_SESSION, true);
-        $this->sessionlessAction = $action->getFullActionName();
+        $this->action = $action instanceof Mage_Core_Controller_Front_Action ? $action : null;
+        $this->frontendAction = $this->frontendAction || $this->action !== null;
     }
 
     public function isSessionless(): bool
     {
-        return $this->sessionlessAction !== null;
+        return $this->getSessionlessAction() !== null;
     }
 
     public function applyToResponse(Mage_Core_Controller_Response_Http $response): void
     {
+        // Core's image route writes a missing resized image and sends it with a year's
+        // Cache-Control. The URL changes with the image settings, and the web server serves
+        // the file at it from then on, so this response gets what the file will.
         $helper = Mage::helper('edgecache');
-        if (!$helper->isEnabled()) {
+        if (!$helper->isEnabled() || ($this->action !== null && is_a($this->action, self::IMAGE_CONTROLLER_CLASS))) {
             return;
         }
 
@@ -68,15 +55,11 @@ class Icecube_EdgeCache_Model_Policy
             return;
         }
 
-        if ($this->sessionlessAction === null) {
+        $sessionlessAction = $this->getSessionlessAction();
+        if ($sessionlessAction === null) {
             if ($this->frontendAction) {
                 $this->sendUncacheable($response);
             }
-            return;
-        }
-
-        if ($this->sessionlessAction === self::IMAGE_RESIZE_ACTION) {
-            $this->applyToImage($response);
             return;
         }
 
@@ -89,17 +72,15 @@ class Icecube_EdgeCache_Model_Policy
 
         $refusal = $this->getRefusal($response);
         if ($refusal !== null) {
-            // A module that always starts a session on an allowlisted page would refuse every request.
-            if (Mage::helper('core')->rateLimiterBy(self::REFUSAL_LOG_LIMITER, $this->sessionlessAction, 1, 3600)->attempt()) {
-                Mage::log(sprintf('%s rendered without a session but %s, so it was not cached', $this->sessionlessAction, $refusal), Mage::LOG_WARNING, Icecube_EdgeCache_Model_Adapter_Noop::LOG_FILE);
+            // A module that always starts a session on a sessionless page would refuse every request.
+            if (Mage::helper('core')->rateLimiterBy(self::REFUSAL_LOG_LIMITER, $sessionlessAction, 1, 3600)->attempt()) {
+                Mage::log(sprintf('%s rendered without a session but %s, so it was not cached', $sessionlessAction, $refusal), Mage::LOG_WARNING, Icecube_EdgeCache_Model_Adapter_Noop::LOG_FILE);
             }
             $this->sendUncacheable($response);
-            // Its key may belong to no session, so let edgecache.js fetch a real one.
-            $this->replaceFormKey($response);
             return;
         }
 
-        $ttl = $response->getHttpResponseCode() === 404 ? $helper->getShortTtl() : $helper->getTtl($this->sessionlessAction);
+        $ttl = $response->getHttpResponseCode() === 404 ? $helper->getShortTtl() : $helper->getTtl($sessionlessAction);
         if ($ttl->maxAge <= 0) {
             $this->sendUncacheable($response);
             return;
@@ -123,38 +104,6 @@ class Icecube_EdgeCache_Model_Policy
             $response->setHeader($name, $value, true);
         }
         $this->removeAcceptFromVary($response);
-        $this->replaceFormKey($response);
-    }
-
-    /**
-     * The URL is signed over the source file and transform, and a replaced image gets a new
-     * file name, so the bytes behind it rarely change. Image format and quality settings
-     * aren't in the signature, so a config save or an image cache flush purges everything.
-     * No tag: purge-all still reaches it.
-     */
-    private function applyToImage(Mage_Core_Controller_Response_Http $response): void
-    {
-        $helper = Mage::helper('edgecache');
-        $ttl = $helper->getTtl(self::IMAGE_RESIZE_ACTION);
-        $type = (string) $response->getSymfonyResponse()->headers->get('Content-Type');
-        if ($response->getHttpResponseCode() !== 200 || !str_starts_with($type, 'image/') || $ttl->maxAge <= 0
-            || session_status() === PHP_SESSION_ACTIVE || $this->hasCookie($response)
-        ) {
-            $this->sendUncacheable($response);
-            return;
-        }
-
-        try {
-            $adapter = $helper->getAdapter();
-        } catch (RuntimeException $e) {
-            Mage::logException($e);
-            return;
-        }
-
-        $response->setHeader('Cache-Control', sprintf('public, max-age=%d', min($ttl->maxAge, self::IMAGE_BROWSER_MAX_AGE)), true);
-        foreach ($adapter->getCacheableHeaders($ttl, []) as $name => $value) {
-            $response->setHeader($name, $value, true);
-        }
     }
 
     /**
@@ -163,6 +112,31 @@ class Icecube_EdgeCache_Model_Policy
     public function isCacheableStatus(int $status): bool
     {
         return $status === 200 || $status === 404;
+    }
+
+    /**
+     * Full action name of the response when core rendered it without a session for sharing,
+     * null otherwise. The flag is read now rather than when the action starts, so an observer
+     * that sets or clears it after ours still counts. Actions outside core's list skip the
+     * session for reasons of their own and are left alone.
+     */
+    private function getSessionlessAction(): ?string
+    {
+        $helper = Mage::helper('edgecache');
+        $action = $this->action;
+        if ($action === null
+            || !$action->getFlag('', Mage_Core_Controller_Varien_Action::FLAG_NO_START_SESSION)
+            || !$helper->isEnabled()
+            || !$helper->isCoreSessionlessEnabled()
+        ) {
+            return null;
+        }
+
+        if (!$helper->isCoreSessionlessRoute($action->getFullActionName('/'))) {
+            return null;
+        }
+
+        return $action->getFullActionName();
     }
 
     /**
@@ -176,16 +150,22 @@ class Icecube_EdgeCache_Model_Policy
         if ($this->hasCookie($response)) {
             return 'a cookie was set';
         }
+        if (Mage::helper('edgecache')->hasDesignUserAgentExceptions()) {
+            return 'a design exception picks the theme by User-Agent';
+        }
+        // Core blanks the key in postDispatch, so one still here was printed after that.
+        $formKey = Mage::getSingleton('core/session')->getData('_form_key');
         $body = $response->getBody();
-        if (is_string($body) && str_contains($body, Icecube_EdgeCache_Helper_Data::FORM_KEY_SENTINEL)) {
-            return 'it echoes the form key sentinel from the request';
+        if (is_string($formKey) && $formKey !== '' && is_string($body) && str_contains($body, $formKey)) {
+            return 'it carries a form key';
         }
 
         return null;
     }
 
     /**
-     * Mage_Core_Model_Cookie calls setcookie() directly, so the Symfony header bag only sees some of them.
+     * Mage_Core_Model_Cookie calls setcookie() directly, so the Symfony header bag only sees some
+     * of them, and raw headers are only sent after this runs.
      */
     private function hasCookie(Mage_Core_Controller_Response_Http $response): bool
     {
@@ -193,7 +173,10 @@ class Icecube_EdgeCache_Model_Policy
             return true;
         }
 
-        return array_any(headers_list(), fn(string $header): bool => stripos($header, 'set-cookie:') === 0);
+        return array_any(
+            [...headers_list(), ...$response->getRawHeaders()],
+            fn(mixed $header): bool => is_string($header) && stripos($header, 'set-cookie:') === 0,
+        );
     }
 
     /**
@@ -237,21 +220,6 @@ class Icecube_EdgeCache_Model_Policy
         $symfony->setVary($vary);
     }
 
-    /**
-     * The key in a shared page would let one visitor's key be replayed by another, and it
-     * would not match any visitor's session anyway. edgecache.js puts each visitor's own key back.
-     */
-    private function replaceFormKey(Mage_Core_Controller_Response_Http $response): void
-    {
-        $formKey = Mage::getSingleton('core/session')->getFormKey();
-        $body = $response->getBody();
-        if (!is_string($formKey) || $formKey === '' || !is_string($body) || !str_contains($body, $formKey)) {
-            return;
-        }
-
-        $response->clearBody()->setBody(str_replace($formKey, Icecube_EdgeCache_Helper_Data::FORM_KEY_SENTINEL, $body));
-    }
-
     private function isHtml(Mage_Core_Controller_Response_Http $response): bool
     {
         $type = $response->getSymfonyResponse()->headers->get('Content-Type');
@@ -262,35 +230,5 @@ class Icecube_EdgeCache_Model_Policy
     private function isMarkdown(Mage_Core_Controller_Response_Http $response): bool
     {
         return str_starts_with((string) $response->getSymfonyResponse()->headers->get('Content-Type'), 'text/markdown');
-    }
-
-    private function canRenderWithoutSession(Mage_Core_Controller_Front_Action $action): bool
-    {
-        $helper = Mage::helper('edgecache');
-        if (!$helper->isEnabled()) {
-            return false;
-        }
-
-        $request = $action->getRequest();
-        if (!in_array($request->getMethod(), ['GET', 'HEAD'], true)) {
-            return false;
-        }
-        // An image is the same for every visitor, bypass cookie or not.
-        if ($action->getFullActionName() === self::IMAGE_RESIZE_ACTION) {
-            return true;
-        }
-
-        return !$this->hasBypassCookie() && $helper->isCacheableAction($action->getFullActionName());
-    }
-
-    private function hasBypassCookie(): bool
-    {
-        $cookie = Mage::getSingleton('core/cookie');
-
-        return array_any(Mage::helper('edgecache')->getBypassCookies(), function (string $name) use ($cookie): bool {
-            $value = $cookie->get($name);
-
-            return is_string($value) && $value !== '';
-        });
     }
 }

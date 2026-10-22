@@ -29,16 +29,24 @@ final class HttpServer
     private static ?HttpClientInterface $client = null;
     private static string $baseUrl = '';
 
+    /** @var array<string, string> */
+    private static array $config = [];
+
+    private static bool $stopRegistered = false;
+
     /**
-     * One server per process, so the config passed by the first call holds for the whole run.
+     * Keeps one server running for as long as callers ask for the same config, and restarts it
+     * with a fresh cache when the config changes.
      *
      * @param array<string, string> $config config paths for the default store view, server only
      */
     public static function start(array $config = []): void
     {
-        if (self::$process?->isRunning() === true) {
+        if (self::$process?->isRunning() === true && self::$config === $config) {
             return;
         }
+        self::stop();
+        self::$config = $config;
 
         $root = self::projectRoot();
         $port = self::freePort();
@@ -59,7 +67,10 @@ final class HttpServer
         );
         self::$process->setTimeout(null);
         self::$process->start();
-        register_shutdown_function(self::stop(...));
+        if (!self::$stopRegistered) {
+            register_shutdown_function(self::stop(...));
+            self::$stopRegistered = true;
+        }
 
         self::$baseUrl = 'http://127.0.0.1:' . $port;
         self::waitUntilListening($port);

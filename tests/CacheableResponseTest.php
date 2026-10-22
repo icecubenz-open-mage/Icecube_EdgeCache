@@ -11,6 +11,10 @@ beforeEach(function (): void {
     HttpServer::start(['edgecache/general/enabled' => '1']);
 });
 
+afterEach(function (): void {
+    removeResizeFixture();
+});
+
 /**
  * @return list<string>
  */
@@ -134,18 +138,42 @@ function resizeQuery(): string
 {
     $media = Mage::getSingleton('catalog/product_media_config')->getBaseMediaPath();
     if (!is_dir($media . '/e/d')) {
-        mkdir($media . '/e/d', 0o777, true);
+        mkdir($media . '/e/d', recursive: true);
     }
-    $image = imagecreatetruecolor(40, 40);
-    imagepng($image, $media . '/e/d/edgecache.png');
+    imagepng(imagecreatetruecolor(40, 40), $media . '/e/d/edgecache.png');
 
-    $model = Mage::getModel('catalog/product_image')
+    return Maho::signImageResizeRequest(resizeModel()->getTransformParams(), Mage::getEncryptionKeyAsHex());
+}
+
+function resizeModel(): Mage_Catalog_Model_Product_Image
+{
+    return Mage::getModel('catalog/product_image')
         ->setDestinationSubdir('small_image')
         ->setWidth(20)
         ->setHeight(20)
         ->setBaseFile('/e/d/edgecache.png');
+}
 
-    return Maho::signImageResizeRequest($model->getTransformParams(), Mage::getEncryptionKeyAsHex());
+/**
+ * The source image and the copy the resize request wrote, which live in the store's real media folder.
+ */
+function removeResizeFixture(): void
+{
+    $source = Mage::getSingleton('catalog/product_media_config')->getBaseMediaPath() . '/e/d/edgecache.png';
+    if (!is_file($source)) {
+        return;
+    }
+    $resized = resizeModel()->getNewFile();
+    foreach ([$resized, $source] as $file) {
+        if (is_string($file) && is_file($file)) {
+            unlink($file);
+        }
+    }
+    foreach ([dirname($source), dirname($source, 2)] as $dir) {
+        if (is_dir($dir) && glob($dir . '/*') === []) {
+            rmdir($dir);
+        }
+    }
 }
 
 it('serves a resized product image without a session, cacheable at the edge', function (): void {

@@ -9,14 +9,17 @@ The design notes, including the header rules, the purge and retry behaviour, kno
 
 ## Requirements
 
-- Maho 26.9 or later, or `dev-main`. The module caches only on a Maho that has the sessionless pages option, which no release has yet. On one without it, the module installs and does nothing: every storefront response gets the uncacheable headers. Version 0.1.x caches on Maho 26.9.2 without the option.
+- Maho 26.9 or later, or `dev-main`. The module caches only on a Maho that has the sessionless pages option, which no release has yet. On one without it, the module installs and does nothing: every storefront response gets the uncacheable headers. On Maho 26.9.2, stay on 0.1.x (`composer require icecube/edge-cache:^0.1`), which caches without the option.
 - PHP 8.5
 - A running queue worker (`./maho queue:work`). Purges are queue messages, and without a worker they sit in the queue table. The module routes its `edgecache` queue to Maho's `fast` pool.
 
 ## Install
 
+The package isn't on Packagist, so add the repository first:
+
 ```sh
-composer require icecube/edge-cache
+composer config repositories.edge-cache vcs https://github.com/icecubenz-open-mage/Icecube_EdgeCache
+composer require icecube/edge-cache:^0.2
 ./maho cache:flush
 ```
 
@@ -28,7 +31,7 @@ Nothing is cached while the store has a design exception by User-Agent (System >
 
 ## Upgrading from 0.1.x
 
-0.2.0 is a breaking change. The module no longer renders pages without a session or swaps the form key itself: the sentinel, `edgecache.js`, the inline head script, `/edgecache/state` and the `edgecache_s` cookie are gone.
+0.2.0 is a breaking change, so `composer update` keeps a project on `^0.1`. Move with `composer require icecube/edge-cache:^0.2`. The module no longer renders pages without a session or swaps the form key itself: the sentinel, `edgecache.js`, the inline head script, `/edgecache/state` and the `edgecache_s` cookie are gone.
 
 - `edgecache/general/cacheable_actions` is replaced by core's `web/sessionless/routes`, written as `module/controller/action`.
 - `edgecache/general/bypass_cookies` is replaced by core's `web/sessionless/cookies`.

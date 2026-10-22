@@ -157,6 +157,26 @@
     document.addEventListener('click', holdClick, true);
     document.addEventListener('submit', holdSubmit, true);
 
+    // Clicks and submits the inline guard in <head> held while this script was loading.
+    function replayHeld() {
+        const held = window.EDGECACHE_HELD;
+        window.EDGECACHE_HELD = null;
+        if (!Array.isArray(held) || held.length === 0) {
+            return;
+        }
+        hydrate().then(() => {
+            for (const [type, el, submitter] of held) {
+                if (type === 'submit') {
+                    el.requestSubmit(submitter ?? undefined);
+                } else {
+                    el.click();
+                }
+            }
+        });
+    }
+
+    replayHeld();
+
     mahoOnReady(() => {
         if (MARKER.test(document.cookie) && isSharedPage()) {
             hydrate();

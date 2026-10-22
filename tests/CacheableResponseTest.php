@@ -168,6 +168,17 @@ it('does not cache a resize request with a bad signature', function (): void {
         ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store']);
 });
 
+it('loads edgecache.js without blocking render, with an inline guard in the head until it runs', function (): void {
+    $body = HttpServer::request('GET', '/')->getContent(false);
+    $head = strstr($body, '</head>', true);
+
+    expect($head)->toBeString()
+        ->and(preg_match('#<script src="[^"]*/js/edgecache\.js"[^>]*\bdefer\b#', (string) $head))->toBe(1)
+        ->and(preg_match('#<script src="[^"]*/js/edgecache\.js"(?![^>]*\bdefer\b)#', $body))->toBe(0)
+        ->and((string) $head)->toContain('window.EDGECACHE_HELD')
+        ->and((string) $head)->toContain('window.EDGECACHE_STATE_URL');
+});
+
 it('answers HEAD like GET', function (): void {
     $response = HttpServer::request('HEAD', '/edgecache-product/');
 

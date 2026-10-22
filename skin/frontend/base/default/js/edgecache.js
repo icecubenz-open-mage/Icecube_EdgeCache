@@ -20,7 +20,7 @@
 
     let pending = null;
     let settled = false;
-    let shared = null;
+    let shared = false;
     // Controls and forms already held, so a second click while waiting isn't replayed twice
     const waiting = new WeakSet();
 
@@ -29,9 +29,10 @@
     }
 
     // Only a page rendered for the edge carries the sentinel. Looking only where it gets
-    // swapped avoids serialising the whole DOM on the first click.
+    // swapped avoids serialising the whole DOM on the first click. Only a yes is kept: core
+    // builds window.minicart on DOMContentLoaded, so an early no may be wrong later.
     function isSharedPage() {
-        shared ??= window.minicart?.formKey === SENTINEL
+        shared ||= window.minicart?.formKey === SENTINEL
             || Array.from(document.querySelectorAll(keySelector())).some(hasSentinel);
         return shared;
     }
@@ -210,9 +211,17 @@
 
     replayHeld();
 
-    mahoOnReady(() => {
+    function hydrateForMarker() {
         if (MARKER.test(document.cookie) && isSharedPage()) {
             hydrate();
         }
-    });
+    }
+
+    // A deferred script runs before DOMContentLoaded, when mahoOnReady() would call back at
+    // once. Listening instead puts this after core's minicart handler, registered during parsing.
+    if (document.readyState === 'complete') {
+        hydrateForMarker();
+    } else {
+        document.addEventListener('DOMContentLoaded', hydrateForMarker);
+    }
 })();

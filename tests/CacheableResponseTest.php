@@ -6,11 +6,7 @@ use Icecube\EdgeCache\Tests\Support\HttpServer;
 use Icecube\EdgeCache\Tests\Support\Catalogue;
 use Symfony\Contracts\HttpClient\ResponseInterface;
 
-const SERVER_CONFIG = [
-    'edgecache/general/enabled' => '1',
-    'web/sessionless/enabled' => '1',
-    'web/sessionless/routes' => "cms/index/index\ncms/page/view\ncatalog/category/view\ncatalog/product/view\ncatalogsearch/result/index\ncms/index/noRoute",
-];
+const SERVER_CONFIG = ['edgecache/general/enabled' => '1'];
 
 beforeEach(function (): void {
     Catalogue::ensure();
@@ -21,7 +17,7 @@ afterEach(function (): void {
     removeResizeFixture();
 });
 
-// The session cookies, then core's default web/sessionless/cookies
+// The session cookies, then the module's default bypass cookies
 dataset('bypass cookies', [
     'session' => 'maho_session=' . str_repeat('a', 32),
     'legacy session' => 'frontend=' . str_repeat('a', 32),
@@ -48,7 +44,7 @@ function containsRealFormKey(string $body): bool
     return preg_match('#(form_key(&quot;:&quot;|/|=|"\s+value=")|formKey:\s*"|FORM_KEY = \')[A-Za-z0-9]{16}#', $body) === 1;
 }
 
-it('caches a page core rendered without a session, tagged', function (string $path, string $tagType, string $idKey): void {
+it('caches a page rendered without a session, tagged', function (string $path, string $tagType, string $idKey): void {
     $ids = Catalogue::ensure();
     $tag = $tagType . ($idKey === 'home'
         ? (int) Mage::getModel('cms/page')->load('home', 'identifier')->getId()
@@ -111,7 +107,7 @@ it('gives search results and 404s the short TTL', function (string $path, int $s
 
 it('does not cache a missing product, which core names catalog/index/noRoute after the forward', function (): void {
     // getFullActionName() keeps the requested route but takes the forwarded controller and
-    // action, so neither core's list nor this module ever matches it
+    // action, so the cacheable list never matches it
     $response = HttpServer::request('GET', '/catalog/product/view/id/999999/');
 
     expect($response->getStatusCode())->toBe(404)
@@ -253,7 +249,7 @@ it('never marks a POST cacheable', function (string $path): void {
         ->and(edgeHeader($response, 'X-Edge-Tags'))->toBe([]);
 })->with(['/', '/edgecache-product/', '/catalogsearch/result/']);
 
-it('leaves a page off core list alone', function (): void {
+it('leaves a page off the list alone', function (): void {
     $response = HttpServer::request('GET', '/customer/account/login/');
 
     expect($response->getStatusCode())->toBe(200)
@@ -277,33 +273,13 @@ it('keeps markdown negotiated on the HTML URL out of shared caches', function ()
         ->and(edgeHeader($response, 'Set-Cookie'))->toBe([]);
 });
 
-it('caches nothing while core renders every page with a session', function (string $path): void {
-    HttpServer::start(['web/sessionless/enabled' => '0'] + SERVER_CONFIG);
+it('caches nothing and keeps the session while the module is off', function (string $path): void {
+    HttpServer::start(['edgecache/general/enabled' => '0']);
 
     $response = HttpServer::request('GET', $path);
 
     expect(edgeHeader($response, 'Cache-Control')[0] ?? '')->not->toContain('public')
-        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store'])
+        ->and(implode("\n", edgeHeader($response, 'Set-Cookie')))->toContain('maho_session=')
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe([])
         ->and(edgeHeader($response, 'X-Edge-Tags'))->toBe([]);
 })->with(['/', '/edgecache-category/', '/edgecache-product/']);
-
-it('caches the pages on core default route list', function (string $path): void {
-    HttpServer::start(['edgecache/general/enabled' => '1', 'web/sessionless/enabled' => '1']);
-
-    $response = HttpServer::request('GET', $path);
-
-    expect($response->getStatusCode())->toBe(200)
-        ->and(edgeHeader($response, 'Set-Cookie'))->toBe([])
-        ->and(edgeHeader($response, 'Cache-Control'))->toBe(['max-age=0, must-revalidate, public']);
-})->with(['/', '/edgecache-category/', '/edgecache-product/']);
-
-it('does not cache a 404 under core default route list', function (string $path): void {
-    // A missing product forwards from a listed action to an unlisted one
-    HttpServer::start(['edgecache/general/enabled' => '1', 'web/sessionless/enabled' => '1']);
-
-    $response = HttpServer::request('GET', $path);
-
-    expect($response->getStatusCode())->toBe(404)
-        ->and(edgeHeader($response, 'Cache-Control')[0] ?? '')->not->toContain('public')
-        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store']);
-})->with(['/no-such-page/', '/catalog/product/view/id/999999/']);

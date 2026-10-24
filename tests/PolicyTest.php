@@ -5,28 +5,60 @@ declare(strict_types=1);
 use Symfony\Component\HttpFoundation\Request;
 
 /**
- * An action as core leaves it once preDispatch has decided about the session.
+ * An action as the router hands it to controller_action_predispatch_session_start.
+ *
+ * @param array<string, string> $cookies
  */
-function frontAction(string $route = 'catalog/product/view', bool $sessionless = true): Mage_Core_Controller_Front_Action
+function frontAction(string $route = 'catalog/product/view', string $method = 'GET', array $cookies = []): Mage_Core_Controller_Front_Action
 {
     [$module, $controller, $name] = explode('/', $route);
-    $request = new Mage_Core_Controller_Request_Http(Request::create('http://localhost/', 'GET'));
+    $request = new Mage_Core_Controller_Request_Http(Request::create('http://localhost/', $method, cookies: $cookies));
     $request->setRouteName($module)->setControllerName($controller)->setActionName($name);
-    $action = new Mage_Core_Controller_Front_Action($request, new Mage_Core_Controller_Response_Http());
-    $action->setFlag('', Mage_Core_Controller_Varien_Action::FLAG_NO_START_SESSION, $sessionless);
 
-    return $action;
+    return new Mage_Core_Controller_Front_Action($request, new Mage_Core_Controller_Response_Http());
 }
 
 /**
- * Dispatches nothing: hands the policy the action and response a render would have left.
+ * A key a module made itself while the session never started. Core's getFormKey() gives ''
+ * without a session, so it can't be what prints one.
+ */
+function strayFormKey(): string
+{
+    $session = Mage::getSingleton('core/session');
+    $session->renewFormKey();
+
+    $formKey = $session->getData('_form_key');
+
+    return is_string($formKey) ? $formKey : '';
+}
+
+/**
+ * Stands in for a Maho that has no Mage_Core_Model_Session::FORM_KEY_ROUTE.
+ */
+function withoutCoreFormKeyFallback(): void
+{
+    Mage::register('_helper/edgecache', new class extends Icecube_EdgeCache_Helper_Data {
+        #[\Override]
+        public function hasCoreFormKeyFallback(): bool
+        {
+            return false;
+        }
+    });
+}
+
+function skipsSession(Mage_Core_Controller_Front_Action $action): bool
+{
+    return (bool) $action->getFlag('', Mage_Core_Controller_Varien_Action::FLAG_NO_START_SESSION);
+}
+
+/**
+ * Dispatches nothing: hands the policy the action and the response a render would have left.
  * Statuses other than 200 and 404 are hard to provoke over HTTP on an empty store, which is
  * why these live here and not in CacheableResponseTest.
  */
 function sessionlessResponse(int $status, string $contentType = 'text/html; charset=UTF-8', ?string $body = null, ?Mage_Core_Controller_Front_Action $action = null): Mage_Core_Controller_Response_Http
 {
     currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '1');
-    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_CORE_SESSIONLESS_ENABLED, '1');
 
     $response = new Mage_Core_Controller_Response_Http();
     $policy = Mage::getSingleton('edgecache/policy');
@@ -40,10 +72,13 @@ function sessionlessResponse(int $status, string $contentType = 'text/html; char
     return $response;
 }
 
-it('caches a page core rendered without a session', function (): void {
-    $response = sessionlessResponse(200);
+it('skips the session for a listed GET and caches the page', function (): void {
+    $action = frontAction();
 
-    expect(Mage::getSingleton('edgecache/policy')->isSessionless())->toBeTrue()
+    $response = sessionlessResponse(200, action: $action);
+
+    expect(skipsSession($action))->toBeTrue()
+        ->and(Mage::getSingleton('edgecache/policy')->isSessionless())->toBeTrue()
         ->and($response->getSymfonyResponse()->headers->get('Cache-Control'))->toBe('max-age=0, must-revalidate, public')
         ->and($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('max-age=86400, stale-while-revalidate=86400, stale-if-error=604800');
 });
@@ -75,30 +110,91 @@ it('makes negotiated markdown private', function (): void {
     expect($response->getSymfonyResponse()->headers->get('Cache-Control'))->toBe('no-store, private');
 });
 
-it('does not cache a page core rendered with a session', function (): void {
-    $response = sessionlessResponse(200, action: frontAction(sessionless: false));
+it('keeps a session for a request that is not GET or HEAD', function (): void {
+    $action = frontAction(method: 'POST');
 
-    expect(Mage::getSingleton('edgecache/policy')->isSessionless())->toBeFalse()
+    $response = sessionlessResponse(200, action: $action);
+
+    expect(skipsSession($action))->toBeFalse()
         ->and($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('no-store');
 });
 
-it('caches nothing while core renders every page with a session', function (): void {
+it('keeps a session for a request carrying a bypass cookie', function (string $cookie): void {
+    $action = frontAction(cookies: [$cookie => 'x']);
+
+    $response = sessionlessResponse(200, action: $action);
+
+    expect(skipsSession($action))->toBeFalse()
+        ->and($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('no-store');
+})->with(['maho_session', 'frontend', 'om_frontend', 'store', 'user_allowed_save_cookie', 'maho_a11y_scan']);
+
+it('keeps a session for a session cookie even with the bypass list cleared', function (): void {
+    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_BYPASS_COOKIES, '');
+    $action = frontAction(cookies: ['maho_session' => 'x']);
+
+    sessionlessResponse(200, action: $action);
+
+    expect(skipsSession($action))->toBeFalse();
+});
+
+it('ignores a bypass cookie sent empty', function (): void {
+    $action = frontAction(cookies: ['maho_session' => '', 'store' => '']);
+
+    sessionlessResponse(200, action: $action);
+
+    expect(skipsSession($action))->toBeTrue();
+});
+
+it('reads the cacheable list one name per line, splitting on spaces and commas too', function (string $list, bool $listed): void {
+    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_CACHEABLE_ACTIONS, $list);
+
+    expect(Mage::helper('edgecache')->isCacheableAction('catalog_product_view'))->toBe($listed);
+})->with([
+    'own line, padded' => ["cms_index_index\n  catalog_product_view  \n", true],
+    'Windows line ends' => ["cms_index_index\r\ncatalog_product_view\r\n", true],
+    'comma separated' => ['cms_index_index, catalog_product_view', true],
+    'not listed' => ["cms_index_index\ncatalog_product_viewer", false],
+    'empty' => ['', false],
+]);
+
+it('skips the session on the legacy resize URL whatever cookies the request carries', function (bool $fallback): void {
+    // Core without resize-without-session would start one, and the image would hand out the cookie
+    if (!$fallback) {
+        withoutCoreFormKeyFallback();
+    }
     currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '1');
-    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_CORE_SESSIONLESS_ENABLED, '0');
-    $policy = Mage::getSingleton('edgecache/policy');
-    $policy->setAction(frontAction());
-    $response = new Mage_Core_Controller_Response_Http();
+    $action = frontAction('core/index/resize', cookies: ['maho_session' => 'x', 'store' => 'default']);
 
-    $response->setHttpResponseCode(200)->setHeader('Content-Type', 'text/html', true);
-    $policy->applyToResponse($response);
+    Mage::getSingleton('edgecache/policy')->setAction($action);
 
-    expect($policy->isSessionless())->toBeFalse()
+    expect(skipsSession($action))->toBeTrue();
+})->with(['with core form key fallback' => true, 'without it' => false]);
+
+it('leaves an action off the list alone', function (): void {
+    $action = frontAction('customer/account/login');
+
+    $response = sessionlessResponse(200, action: $action);
+
+    expect(skipsSession($action))->toBeFalse()
         ->and($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('no-store');
 });
 
-it('leaves an action off core list alone even when it skips the session', function (): void {
-    // API endpoints and scripts skip the session for their own reasons.
-    $response = sessionlessResponse(200, action: frontAction('customer/account/login'));
+it('sets the flag from an observer outside the frontend area, which loads after the event', function (): void {
+    // The test boots no area, as core hasn't loaded the frontend one when it fires the event
+    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '1');
+    $action = frontAction();
+
+    Mage::dispatchEvent('controller_action_predispatch_session_start', ['controller_action' => $action]);
+
+    expect(skipsSession($action))->toBeTrue();
+});
+
+it('leaves alone an action off the list that skips the session itself', function (): void {
+    // Robots, sitemaps and API endpoints set the flag for reasons of their own
+    $action = frontAction('customer/account/login');
+    $action->setFlag('', Mage_Core_Controller_Varien_Action::FLAG_NO_START_SESSION, true);
+
+    $response = sessionlessResponse(200, action: $action);
 
     expect(Mage::getSingleton('edgecache/policy')->isSessionless())->toBeFalse()
         ->and($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('no-store');
@@ -106,43 +202,54 @@ it('leaves an action off core list alone even when it skips the session', functi
 
 it('reads the session flag as the response goes out, after every observer has had its say', function (): void {
     currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '1');
-    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_CORE_SESSIONLESS_ENABLED, '1');
-    $action = frontAction(sessionless: false);
+    $action = frontAction();
     $policy = Mage::getSingleton('edgecache/policy');
 
     $policy->setAction($action);
-    $action->setFlag('', Mage_Core_Controller_Varien_Action::FLAG_NO_START_SESSION, true);
-
-    expect($policy->isSessionless())->toBeTrue();
-});
-
-it('follows a forward to an action that starts the session', function (): void {
-    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '1');
-    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_CORE_SESSIONLESS_ENABLED, '1');
-    $policy = Mage::getSingleton('edgecache/policy');
-
-    $policy->setAction(frontAction());
-    $policy->setAction(frontAction('customer/account/login', sessionless: false));
+    $action->setFlag('', Mage_Core_Controller_Varien_Action::FLAG_NO_START_SESSION, false);
 
     expect($policy->isSessionless())->toBeFalse();
 });
 
-it('does nothing while the module is disabled', function (): void {
-    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_CORE_SESSIONLESS_ENABLED, '1');
+it('lets a forward to an action off the list start the session', function (): void {
+    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '1');
     $policy = Mage::getSingleton('edgecache/policy');
-    $policy->setAction(frontAction('cms/index/index'));
+    $forwarded = frontAction('customer/account/login');
+
+    $policy->setAction(frontAction());
+    $policy->setAction($forwarded);
+
+    expect($policy->isSessionless())->toBeFalse()
+        ->and(skipsSession($forwarded))->toBeFalse();
+});
+
+it('does nothing while the module is disabled', function (): void {
+    $action = frontAction('cms/index/index');
+    $policy = Mage::getSingleton('edgecache/policy');
+    $policy->setAction($action);
     $response = new Mage_Core_Controller_Response_Http();
 
     $response->setHttpResponseCode(200)->setHeader('Content-Type', 'text/html', true);
     $policy->applyToResponse($response);
 
-    expect($policy->isSessionless())->toBeFalse()
+    expect(skipsSession($action))->toBeFalse()
         ->and($response->getSymfonyResponse()->headers->has('X-Edge-Cache-Control'))->toBeFalse();
 });
 
+it('keeps the session and caches nothing on a Maho without the core form key fallback', function (): void {
+    // Without it the page would carry a key no session knows, and every form on it would fail
+    withoutCoreFormKeyFallback();
+    $action = frontAction();
+
+    $response = sessionlessResponse(200, action: $action);
+
+    expect(skipsSession($action))->toBeFalse()
+        ->and(Mage::getSingleton('edgecache/policy')->isSessionless())->toBeFalse()
+        ->and($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('no-store');
+});
+
 it('does not cache a page that still carries a form key', function (): void {
-    // Core blanks the key in postDispatch; one printed after that belongs to no session.
-    $response = sessionlessResponse(200, body: '<p>' . Mage::getSingleton('core/session')->getFormKey() . '</p>');
+    $response = sessionlessResponse(200, body: '<p>' . strayFormKey() . '</p>');
 
     expect($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('no-store');
 });
@@ -157,8 +264,8 @@ it('logs a refused render once an hour per action', function (): void {
     Mage::helper('core')->rateLimiterBy(Icecube_EdgeCache_Model_Policy::REFUSAL_LOG_LIMITER, 'catalog_product_view', 1, 3600)->clear();
     $before = $countLines();
 
-    sessionlessResponse(200, body: '<p>' . Mage::getSingleton('core/session')->getFormKey() . '</p>');
-    sessionlessResponse(200, body: '<p>' . Mage::getSingleton('core/session')->getFormKey() . '</p>');
+    sessionlessResponse(200, body: '<p>' . strayFormKey() . '</p>');
+    sessionlessResponse(200, body: '<p>' . strayFormKey() . '</p>');
 
     expect($countLines() - $before)->toBe(1);
 });
@@ -180,31 +287,6 @@ it('does not cache a sessionless render that started a session after all', funct
     expect($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('no-store');
 });
 
-it('caches nothing, and throws nothing, on a Maho without core sessionless pages', function (): void {
-    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '1');
-    // Robots, sitemaps and the image resize skip the session on any Maho
-    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_CORE_SESSIONLESS_ENABLED, null);
-    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_CORE_SESSIONLESS_ROUTES, null);
-    $policy = Mage::getSingleton('edgecache/policy');
-    $policy->setAction(frontAction());
-    $response = new Mage_Core_Controller_Response_Http();
-
-    $response->setHttpResponseCode(200)->setHeader('Content-Type', 'text/html', true);
-    $policy->applyToResponse($response);
-
-    expect($policy->isSessionless())->toBeFalse()
-        ->and($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('no-store');
-});
-
-it('reads core route list one route per line, as core does', function (string $routes, bool $listed): void {
-    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_CORE_SESSIONLESS_ROUTES, $routes);
-
-    expect(Mage::helper('edgecache')->isCoreSessionlessRoute('catalog/product/view'))->toBe($listed);
-})->with([
-    'own line' => ["cms/index/index\n  catalog/product/view  \n", true],
-    'shares a line' => ['cms/index/index, catalog/product/view', false],
-]);
-
 it('does not cache while a design exception picks the theme by User-Agent', function (string $path): void {
     // The edge keys on the URL, so one phone would hand its theme to every desktop visitor
     currentStore()->setConfig($path, serialize([['regexp' => 'iPhone', 'value' => 'mobile']]));
@@ -225,7 +307,6 @@ it('caches a page when the design exceptions are saved empty', function (): void
 it('does not cache a page carrying a raw Set-Cookie header', function (): void {
     // Raw headers go out after http_response_send_before, so only the response knows of them
     currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '1');
-    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_CORE_SESSIONLESS_ENABLED, '1');
     $policy = Mage::getSingleton('edgecache/policy');
     $policy->setAction(frontAction());
     $response = new Mage_Core_Controller_Response_Http();

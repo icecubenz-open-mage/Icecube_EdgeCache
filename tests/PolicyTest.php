@@ -179,6 +179,16 @@ it('leaves an action off the list alone', function (): void {
         ->and($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('no-store');
 });
 
+it('never skips the session on core form key route, even when it is listed', function (): void {
+    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_CACHEABLE_ACTIONS, "catalog_product_view\ncore_index_formKey");
+    $action = frontAction('core/index/formKey');
+
+    $response = sessionlessResponse(200, action: $action);
+
+    expect(skipsSession($action))->toBeFalse()
+        ->and($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('no-store');
+});
+
 it('sets the flag from an observer outside the frontend area, which loads after the event', function (): void {
     // The test boots no area, as core hasn't loaded the frontend one when it fires the event
     currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '1');

@@ -25,6 +25,13 @@ class Icecube_EdgeCache_Helper_Data extends Mage_Core_Helper_Abstract
     public const XML_PATH_PURGE_DELAY = 'edgecache/general/purge_delay';
     public const XML_PATH_ADAPTERS = 'global/edgecache/adapters';
 
+    /**
+     * Core's form key endpoint, Mage_Core_Model_Session::FORM_KEY_ROUTE as a full action name,
+     * written out because a Maho without the fallback has no such constant. It hands the
+     * visitor a key and must start their session, so it never skips it, listed or not.
+     */
+    public const FORM_KEY_ACTION = 'core_index_formKey';
+
     /** Mage_Core_Model_Design_Package::_checkUserAgentAgainstRegexps() reads these */
     public const XML_PATHS_DESIGN_UA_REGEXP = [
         'design/package/ua_regexp',
@@ -73,7 +80,8 @@ class Icecube_EdgeCache_Helper_Data extends Mage_Core_Helper_Abstract
 
     public function isCacheableAction(string $fullActionName): bool
     {
-        return in_array($fullActionName, $this->getList(self::XML_PATH_CACHEABLE_ACTIONS), true);
+        return $fullActionName !== self::FORM_KEY_ACTION
+            && in_array($fullActionName, $this->getList(self::XML_PATH_CACHEABLE_ACTIONS), true);
     }
 
     /**

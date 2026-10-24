@@ -2,17 +2,15 @@
 
 `icecube/edge-cache` (module `Icecube_EdgeCache`) makes anonymous storefront pages cacheable at whatever sits in front of Maho: Cloudflare, Varnish, or another CDN through an adapter. It's observer-only. No rewrites, no core edits.
 
-Core renders, EdgeCache caches. Maho's Pages Without a Session option (`web/sessionless`), [proposed upstream](https://github.com/mahocommerce/maho/discussions/608), renders a new visitor's page with no session, no cookie and an empty form key, and its `js.js` fetches a real key on the first POST. EdgeCache doesn't render anything itself: it decides whether such a response may be shared, tags it and purges it.
+EdgeCache picks the pages, core blanks the key. On the `controller_action_predispatch_session_start` event ([#888](https://github.com/mahocommerce/maho/pull/888)), EdgeCache sets `FLAG_NO_START_SESSION` for a GET or HEAD to a listed page from a visitor with no session. Core then sends that page with an empty form key, and its `js.js` fetches a real one before the first POST. EdgeCache decides whether the response may be shared, tags it and purges it.
 
-Maho file references below are against Maho main with the sessionless pages change (`4841a0701` on the `sessionless-pages` branch). Versions 0.1.x rendered sessionless pages and swapped the form key themselves, on 26.9.2.
+Maho file references below are against Maho main (`603008384`) with core's `sessionless-form-key` (`174f93302`, `ce7558461`) and `resize-without-session` (`31b40b6c3`) commits applied. Versions 0.1.x swapped the form key with their own JavaScript, on 26.9.2. Versions 0.2.x left the page list to a core option that wasn't merged. Coming from 0.2.x, `cacheable_actions` and `bypass_cookies` rows left from 0.1 take effect again, and the default list adds search results, the 404 page and the blog to core's old four routes.
 
 ## What it does
 
-- Responses core rendered without a session are marked cacheable, unless a session started or a cookie or form key got into them after all.
+- Listed pages render without a session for a visitor who has none, and are marked cacheable, unless a session started or a cookie or form key got into them after all.
 - Cache tags are collected while the page renders and sent in the adapter's tag header.
 - Cache cleans are turned into tag purges, buffered per process and sent through the Maho queue.
-
-With core's option off nothing renders without a session, so nothing is cached. On a Maho that doesn't have the option the config paths are simply absent: EdgeCache reads them by path, not through core's constants, so it sends the uncacheable headers and throws nothing. There's no fallback.
 
 No local full-page cache. Tiered edges, a long TTL with stale-while-revalidate and tag purge keep misses rare. Self-hosted Varnish is the local option if one's needed.
 
@@ -20,11 +18,11 @@ No local full-page cache. Tiered edges, a long TTL with stale-while-revalidate a
 
 ```text
                 +--------------------- provider-neutral core ---------------------+
-request ------> | core: web/sessionless -> FLAG_NO_START_SESSION -> render         |
-                | Policy::setAction (predispatch_session_start)                    |
+request ------> | predispatch_session_start: Policy::setAction                     |
+                |   list, method, cookies -> FLAG_NO_START_SESSION -> render       |
                 | TagCollector (model_load_after, collection load events)          |
                 | http_response_send_before: Policy::applyToResponse               |
-                |   core's flag, status, content type, refusal guard, TTL, headers |
+                |   flag, status, content type, refusal guard, TTL, headers        |
 save/clean ---> | application_clean_cache etc -> PurgeBuffer -> queue `edgecache`  |
                 |   -> PurgeHandler (#[MessageHandler]) -> adapter                 |
                 +-------------------------------+---------------------------------+
@@ -34,29 +32,37 @@ save/clean ---> | application_clean_cache etc -> PurgeBuffer -> queue `edgecache
                             +-------------+--------------+-------------+
 ```
 
-### Sessionless render (core)
+### Sessionless render
 
-`Mage_Core_Controller_Front_Action::preDispatch()` sets `FLAG_NO_START_SESSION` when `_canRenderWithoutSession()` says so (`app/code/core/Mage/Core/Controller/Front/Action.php:64-66, 88-105`):
-
-- `web/sessionless/enabled` is on
-- the method is GET or HEAD
-- the request carries no session cookie (`maho_session`, `frontend`, `om_frontend`) and none of `web/sessionless/cookies`
-- the route (`module/controller/action`) is in `web/sessionless/routes`
-
-`Mage_Core_Controller_Varien_Action::preDispatch()` then fires `controller_action_predispatch_session_start` and skips the session start (`app/code/core/Mage/Core/Controller/Varien/Action.php:473-476`). In `postDispatch()` core replaces the form key in the body with an empty string (`Front/Action.php:180-207`), so the page goes out with `FORM_KEY = ''` and empty `form_key` inputs and data-params.
-
-EdgeCache records the action on `controller_action_predispatch_session_start` and reads its flag when the response goes out, so an observer that sets or clears the flag after EdgeCache's still counts. A response is a candidate for the edge when all of these hold:
+`Mage_Core_Controller_Varien_Action::preDispatch()` fires `controller_action_predispatch_session_start` and starts the session unless `FLAG_NO_START_SESSION` is set (`app/code/core/Mage/Core/Controller/Varien/Action.php:473-476`). The event has been in every release since 26.5.0. EdgeCache's observer sets the flag when all of these hold:
 
 - the module is enabled
-- `web/sessionless/enabled` is on
-- the action that rendered it, forwards included, has `FLAG_NO_START_SESSION`
-- its route is in `web/sessionless/routes`, read as core reads it: one per line, trimmed
+- core has the form key fallback (below)
+- the method is GET or HEAD
+- the request carries no session cookie (`maho_session`, `frontend`, `om_frontend`) and none of `edgecache/general/bypass_cookies`
+- the full action name is in `edgecache/general/cacheable_actions`
 
-Other actions skip the session for their own reasons (OAuth, the API, robots and llms.txt, the image route) and are left out.
+It runs for every action a request dispatches, so a forward decides again.
+
+With the flag set, the session never starts, and `Mage_Core_Model_Session::getFormKey()` returns an empty string while there's no session (`app/code/core/Mage/Core/Model/Session.php:39-49`). The page goes out with `FORM_KEY = ''` and empty `form_key` inputs and data-params. See Form key.
+
+EdgeCache reads the flag again when the response goes out, so an observer that sets or clears it after EdgeCache's still counts. A response is a candidate for the edge when the module is enabled, core has the fallback, the action that rendered it (forwards included) has the flag, and its full action name is on the list. Other actions skip the session for their own reasons (OAuth, the API, robots and llms.txt, the image route) and are left out.
+
+The legacy `core/index/resize` URL skips the session for every visitor, bypass cookies or not: it only redirects to the image file, and a first visit from an old email shouldn't get a session cookie from an image. It does so on a Maho without core's form key fallback too, since an image holds no form key. Its responses get the uncacheable headers.
+
+### Without core's form key fallback
+
+A page rendered without a session on a Maho that doesn't blank the key would print a key from a session that's never saved. Every form on it would post a key no session knows, and fail, whether or not the page is cached. So on such a Maho EdgeCache never sets the flag, apart from the legacy resize URL: every visitor keeps their session, every storefront response gets the uncacheable headers, and the module only purges. Refusing to cache after rendering without a session wouldn't be enough, since the visitor who got that render would still have broken forms.
+
+EdgeCache detects the fallback by `Mage_Core_Model_Session::FORM_KEY_ROUTE`, the route core's `js.js` fetches the key from.
+
+That route (`core/index/formKey`, full action name `core_index_formKey`) starts the visitor's session and answers `private, no-store`. EdgeCache never skips the session on it, even if it's added to `cacheable_actions`: the check is hard-coded, as the session cookie names are.
+
+The observer is declared in the global area. Core fires the event before it loads the frontend area, so an observer declared there would never run.
 
 ### Bypass cookies
 
-Core keeps the session for a request carrying any of these, so its page is never cached. The CDN must bypass its cache on exactly the same set, or it will serve the shared page to a visitor the origin would have rendered differently.
+EdgeCache keeps the session for a request carrying any of these, so its page is never cached. The CDN must bypass its cache on exactly the same set, or it will serve the shared page to a visitor the origin would have rendered differently.
 
 | Cookie | Why |
 |---|---|
@@ -66,13 +72,13 @@ Core keeps the session for a request carrying any of these, so its page is never
 | `user_allowed_save_cookie` | Cookie-restriction consent; decides whether the notice and the GA, GTM and Meta pixel scripts render |
 | `maho_a11y_scan` | The accessibility scanner's one-time token; turns on template hints for the request |
 
-The session names are hard-coded in core. The rest are core's `web/sessionless/cookies`, so a module that varies HTML on its own cookie adds it there, and at the CDN.
+The session names are always included, so clearing the setting can't make sessions cacheable. The rest are `edgecache/general/bypass_cookies`, so a module that varies HTML on its own cookie adds it there, and at the CDN.
 
 ### Design exceptions by User-Agent
 
-System > Configuration > Design can pick the package, theme, templates, skin or layout by matching the User-Agent (`design/package/ua_regexp` and `design/theme/*_ua_regexp`, read in `Mage_Core_Model_Design_Package::_checkUserAgentAgainstRegexps()`). The edge keys on the URL, so the first visitor's theme would be served to everyone. EdgeCache refuses to cache anything while any of those exceptions is set, at any scope that reaches the store view. Core's sessionless option doesn't check them, so the page still renders without a session; it just isn't shared.
+System > Configuration > Design can pick the package, theme, templates, skin or layout by matching the User-Agent (`design/package/ua_regexp` and `design/theme/*_ua_regexp`, read in `Mage_Core_Model_Design_Package::_checkUserAgentAgainstRegexps()`). The edge keys on the URL, so the first visitor's theme would be served to everyone. EdgeCache refuses to cache anything while any of those exceptions is set, at any scope that reaches the store view. The page still renders without a session; it just isn't shared.
 
-A guest's first POST starts a session (core fetches the key from `checkout/cart/ajaxContent`), and from then on the CDN sends that visitor to origin for every page. That's the price of a simple, safe bypass rule.
+A guest's first POST starts a session (core fetches the key from `core/index/formKey`), and from then on the CDN sends that visitor to origin for every page. That's the price of a simple, safe bypass rule.
 
 ### Response policy
 
@@ -82,10 +88,10 @@ Runs on `http_response_send_before` (`app/code/core/Mage/Core/Controller/Respons
 2. Markdown negotiated on a non-`.md` URL gets `Cache-Control: private, no-store`.
 3. A frontend action that isn't a candidate (above) gets the adapter's uncacheable headers.
 4. Anything other than a 200 or 404 HTML response, or a redirect, is uncacheable.
-5. If a session started anyway, a cookie is about to be sent (through `setcookie()`, the header bag or a raw header), a design exception picks the theme by User-Agent, or the body still holds a form key, it's uncacheable. Core blanks the key in `postDispatch()`, so one still there was printed after that, by an observer or a late block, and belongs to no visitor's session. The first refusal per action each hour is logged to `var/log/edgecache.log`, through core's rate limiter, so a module that always starts a session can't fill the log. The guard never strips the cookie or the key.
+5. If a session started anyway, a cookie is about to be sent (through `setcookie()`, the header bag or a raw header), a design exception picks the theme by User-Agent, or the body still holds a form key, it's uncacheable. Core prints no key without a session, so one there came from a module that made its own (`renewFormKey()`), and belongs to no visitor's session. The first refusal per action each hour is logged to `var/log/edgecache.log`, through core's rate limiter, so a module that always starts a session can't fill the log. The guard never strips the cookie or the key.
 6. 404 and the short-TTL actions get `edgecache/general/short_ttl`. Everything else gets the normal TTL.
 
-Caching 404s is deliberate: bots probing random URLs would otherwise all hit origin. Two side effects. A URL created after its 404 was cached serves that 404 for up to `short_ttl` plus stale-while-revalidate (about 10 minutes by default), and random URLs take up cache space. Setting `short_ttl` to 0 stops caching them, along with the other short-TTL actions such as search results. A 404 only renders sessionless when `cms/index/noRoute` is in core's routes, which it isn't by default; search results need `catalogsearch/result/index` there too. Only a URL no router matches gets that name. A missing product or category forwards from its own action to the CMS 404, and `getFullActionName()` keeps the requested route with the forwarded controller and action, so core sees `catalog/index/noRoute`. That's on no list, so core doesn't flag the render and EdgeCache sends the uncacheable headers.
+Caching 404s is deliberate: bots probing random URLs would otherwise all hit origin. Two side effects. A URL created after its 404 was cached serves that 404 for up to `short_ttl` plus stale-while-revalidate (about 10 minutes by default), and random URLs take up cache space. Setting `short_ttl` to 0 stops caching them, along with the other short-TTL actions such as search results. A 404 only renders sessionless while `cms_index_noRoute` is in `cacheable_actions`, as it is by default. Only a URL no router matches gets that name. A missing product or category forwards from its own action to the CMS 404, and `getFullActionName()` keeps the requested route with the forwarded controller and action, so the forwarded action is `catalog_index_noRoute`. That's not on the list, so the 404 for a missing product gets the uncacheable headers.
 7. Tags are normalised and capped to the adapter's limits, the browser header and adapter headers are set, and `Accept` is removed from `Vary`.
 
 ### Tags
@@ -194,7 +200,7 @@ Akamai ignores origin `Cache-Control` by default, so its `getUncacheableHeaders(
 
 ### Sample VCL
 
-For Varnish 7 with `vmod_xkey`. It's a starting point, not a tested production config. Keep the cookie list in step with Bypass cookies (session names plus core's `web/sessionless/cookies`).
+For Varnish 7 with `vmod_xkey`. It's a starting point, not a tested production config. Keep the cookie list in step with Bypass cookies (session names plus `edgecache/general/bypass_cookies`).
 
 ```vcl
 vcl 4.1;
@@ -281,7 +287,7 @@ So the Policy removes `Accept` from `Vary` on cacheable HTML and makes markdown 
 
 On main, pages link a resized image at its file path, `media/catalog/product/cache/<settings hash>/<width>/...`. The web server serves the file once it exists and sends a miss to `Mage_Core_ImageController`, which writes it and answers with `Cache-Control: public, max-age=31536000` and no session (`app/code/core/Mage/Core/controllers/ImageController.php`). The hash covers the format, quality and other settings, so a changed setting gives a new URL. EdgeCache leaves that response alone: it gets what the file will get from the web server on every later request.
 
-`core/index/resize/?t=...&s=...` is the URL of earlier releases. Core keeps it for emails and pages cached before an upgrade and answers a valid signature with a 301 to the file (`app/code/core/Mage/Core/controllers/IndexController.php:37-67`), without a session whatever cookies the request carries. That redirect, and its 400, 403 and 404 answers, get the uncacheable headers.
+`core/index/resize/?t=...&s=...` is the URL of earlier releases. Core keeps it for emails and pages cached before an upgrade and answers a valid signature with a 301 to the file (`app/code/core/Mage/Core/controllers/IndexController.php:54-79`). EdgeCache skips the session for it whatever cookies the request carries (see Sessionless render). That redirect, and its 400, 403 and 404 answers, get the uncacheable headers.
 
 A config save or a Flush Catalog Images Cache (`clean_catalog_images_cache_after`) purges everything, which reaches the untagged image objects at the edge.
 
@@ -289,34 +295,34 @@ A config save or a Flush Catalog Images Cache (`clean_catalog_images_cache_after
 
 | Case | Browser `Cache-Control` | Edge TTL (adapter header) | Tags |
 |---|---|---|---|
-| Core rendered it without a session (route on core's list), no session started, no cookie or key, 200 HTML | `public, max-age=0, must-revalidate` | `edgecache/general/ttl` (86400), SWR 86400, SIE 604800 | yes |
+| Rendered without a session (action on the list), no session started, no cookie or key, 200 HTML | `public, max-age=0, must-revalidate` | `edgecache/general/ttl` (86400), SWR 86400, SIE 604800 | yes |
 | The same for `catalogsearch_result_index`, `cms_index_noRoute`, any 404 | same | `short_ttl` (300) | yes |
 | Core's image route | core's (`public, max-age=31536000`) | none | no |
 | `core_index_resize` (301, 400, 403, 404) | core default | `getUncacheableHeaders()` | no |
 | A design exception by User-Agent is set | core default | `getUncacheableHeaders()` | no |
-| A route on core's list, but the request carries a bypass cookie | core default | `getUncacheableHeaders()` | no |
-| Core's sessionless option off, or a Maho without it | core default | `getUncacheableHeaders()` | no |
+| An action on the list, but the request carries a bypass cookie | core default | `getUncacheableHeaders()` | no |
+| A Maho without core's form key fallback | core default | `getUncacheableHeaders()` | no |
 | An uncaught exception (500 error page) | core default | none, the CDN decides | no |
 | Markdown on a non-`.md` URL | `private, no-store` | `getUncacheableHeaders()` | no |
-| POST, checkout, customer, cart, `checkout/cart/ajaxContent` | `private, no-store` or core default | `getUncacheableHeaders()` | no |
+| POST, checkout, customer, cart, `core/index/formKey` | `private, no-store` or core default | `getUncacheableHeaders()` | no |
 
-Core's default routes are `cms/index/index`, `cms/page/view`, `catalog/category/view` and `catalog/product/view`. Search results, the 404 page and blog pages are only cached once they're added there.
+The default list is `cms_index_index`, `cms_page_view`, `catalog_category_view`, `catalog_product_view`, `blog_index_index`, `blog_index_category`, `blog_index_view`, `catalogsearch_result_index` and `cms_index_noRoute`.
 
 Anyone holding a session (a guest with a cart, a logged-in customer) goes to origin, because the CDN bypasses on `maho_session`. Edge hits are for visitors without one. If the bypass rule is ever narrowed so session holders get edge hits, logged-in customers would see anonymous prices: a vary cookie (`edgecache_vary`, a hash of the customer group) would be needed first, and isn't built.
 
 ## Form key (core)
 
-A sessionless page has `FORM_KEY = ''` and `FORM_KEY_URL` in its head. Core's `js.js` gets a real key from `GET checkout/cart/ajaxContent` (which starts the session and answers `private, no-store`) before the first POST leaves: in `mahoFetch()` for a POST, in a capture-phase `submit` listener that holds the submit and resubmits once the key is in, and in a wrapper round `HTMLFormElement.prototype.submit` for `form.submit()`, which fires no event. The key then goes into the `form_key` input, adding one if the form has none. Main prints no key in URLs on the base theme: add to cart, wishlist and compare post it in the body, through a form or `customFormSubmit()` with `{"form_key":""}` data-params.
+A sessionless page has `FORM_KEY = ''` and `FORM_KEY_URL` in its head. Core's `js.js` gets a real key from `GET core/index/formKey` (`Mage_Core_Model_Session::FORM_KEY_ROUTE`, which starts the session and answers `{"form_key": ...}` with `private, no-store`) before the first POST leaves: in `mahoFetch()` for a POST, in a capture-phase `submit` listener that holds the submit and resubmits once the key is in, and in a wrapper round `HTMLFormElement.prototype.submit` for `form.submit()`, which fires no event. The key then goes into the `form_key` input, adding one if the form has none. Main prints no key in URLs on the base theme: add to cart, wishlist and compare post it in the body, through a form or `customFormSubmit()` with `{"form_key":""}` data-params.
 
-Checked in a browser against a cold, edge-cacheable page on Maho main with the `sessionless-pages` branch (`4841a0701`): add to cart (category list and product page), wishlist, compare, review and newsletter each fetched the key once and posted it.
+Checked in a browser against a cold, edge-cacheable page on Maho main (`603008384`) with core's `sessionless-form-key` (`174f93302`, `ce7558461`) and `resize-without-session` (`31b40b6c3`) commits: add to cart (category list and product page), wishlist, compare and newsletter each fetched the key once and posted it.
 
 Nothing puts the visitor's own state back into a cached page. A session holder served one (by a CDN that doesn't bypass on `maho_session`) sees the anonymous page with an empty minicart, though a POST from it still gets their own key. Bypass on the session cookie.
 
 Speculation Rules (off by default) can prefetch footer links such as My Account, which starts a session. If it's on, exclude session-starting paths from its rules.
 
-Search autocomplete starts a session too: typing in the header search box calls `catalogsearch/ajax/suggest` (`maho-autocomplete.js`), which isn't on core's list, so from then on that visitor goes to origin.
+Search autocomplete starts a session too: typing in the header search box calls `catalogsearch/ajax/suggest` (`maho-autocomplete.js`), which isn't on the list, so from then on that visitor goes to origin.
 
 ## Maho notes
 
 - The purge observer uses `catalogrule_before_apply` (`app/code/core/Mage/CatalogRule/Model/Action/Index/Refresh.php:88`), which fires before the rule prices are written, so a page fetched during a long reindex can be cached with the old prices. `catalogrule_after_apply` (same file, line 574) fires once they are, and would be the better trigger.
-- Sitemap, robots and llms controllers set `FLAG_NO_START_SESSION` themselves. They aren't on core's list, so they get the uncacheable headers, as they did before.
+- Sitemap, robots and llms controllers set `FLAG_NO_START_SESSION` themselves. They aren't on the list, so they get the uncacheable headers.

@@ -78,6 +78,13 @@ System > Configuration > Advanced > Edge Cache.
 
 Cloudflare doesn't cache HTML by default. Add a Cache Rule that makes the storefront eligible for cache and respects the origin's cache headers, and exclude admin and API paths from it.
 
+Two zone settings undo the module's headers:
+
+- Browser Cache TTL must stay on Respect Existing Headers, or set to Respect origin in the Cache Rule. Any other value replaces a lower `max-age`, so browsers would keep a page for that long whatever a purge does ([Browser Cache TTL](https://developers.cloudflare.com/cache/how-to/edge-browser-cache-ttl/#browser-cache-ttl)).
+- Always Online must be off. With it on, Cloudflare ignores `stale-while-revalidate` and `stale-if-error` ([Cache-Control directives](https://developers.cloudflare.com/cache/concepts/cache-control/#revalidation)).
+
+Turn on Tiered Cache with the Smart topology, which every plan has, so data centres fill from one upper tier near the origin rather than each going to the origin.
+
 For Varnish, start from the sample VCL in the design notes.
 
 ## The CDN must bypass on the same cookies

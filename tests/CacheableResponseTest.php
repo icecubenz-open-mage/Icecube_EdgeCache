@@ -47,7 +47,7 @@ function containsRealFormKey(string $body): bool
 it('caches a page rendered without a session, tagged', function (string $path, string $tagType, string $idKey): void {
     $ids = Catalogue::ensure();
     $tag = $tagType . ($idKey === 'home'
-        ? (int) Mage::getModel('cms/page')->load('home', 'identifier')->getId()
+        ? (int) Mage::getModel('cms/page')->checkIdentifier('home', currentStore()->getId())
         : $ids[$idKey]);
 
     $response = HttpServer::request('GET', $path);

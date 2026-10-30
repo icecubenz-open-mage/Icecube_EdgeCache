@@ -181,6 +181,8 @@ Nothing in the module calls `purgeUrls()`, and no shipped adapter sets `maxTagsP
 
 The adapter's headers are set after the browser `Cache-Control`, so an adapter for a CDN that only reads `Cache-Control` can override it.
 
+An adapter can also implement `Icecube_EdgeCache_Model_Adapter_InvalidatesInterface`, whose `invalidateAll()` marks the whole cache stale instead of emptying it. The next request for a page gets the stale copy within `stale_while_revalidate` while the CDN fetches the page again, so a deploy can refresh every page without leaving the edge cold. Nothing in the module calls it: a save purges, because a changed price or stock level must not be served again. It's for a deploy script that knows the old pages are still fine to show once more. Cloudflare implements it with `POST /zones/{id}/invalidate_cache`. Maho sends no `ETag` or `Last-Modified` for a page, so Cloudflare can't answer a revalidation with a 304 and fetches each page in full.
+
 Adding a provider takes one class, one `global/edgecache/adapters/<code>/class` node and a `system.xml` group with a `depends` on the adapter select. It doesn't have to live in this package.
 
 ### Header and purge matrix
@@ -190,7 +192,7 @@ RFC 9213 `CDN-Cache-Control` is used wherever the provider documents it. There a
 | Provider | TTL header | Tag header | Limits | Purge tags | Purge all |
 |---|---|---|---|---|---|
 | Noop (dev) | `X-Edge-Cache-Control` | `X-Edge-Tags` | 16 KB | logged | logged |
-| Cloudflare | `CDN-Cache-Control`, or `Cloudflare-CDN-Cache-Control` when another CDN is downstream | `Cache-Tag`, comma-separated | 16 KB, 1,024 chars per tag, 100 per purge | `POST /zones/{id}/purge_cache` `{"tags":[...]}` | `{"purge_everything":true}` |
+| Cloudflare | `CDN-Cache-Control`, or `Cloudflare-CDN-Cache-Control` when another CDN is downstream | `Cache-Tag`, comma-separated | 16 KB, 1,024 chars per tag, 100 per purge | `POST /zones/{id}/purge_cache` `{"tags":[...]}` | `{"purge_everything":true}`, or the same to `invalidate_cache` for `invalidateAll()` |
 | Varnish | `CDN-Cache-Control`, parsed in VCL then unset | `xkey`, space-separated | 7 KB (`http_resp_hdr_len` default 8 KB) | `PURGE` with `xkey`, optional `X-Soft-Purge: 1`, to every node | `BAN` with `X-Ban-Url: .` per store host |
 | Fastly | `Surrogate-Control` | `Surrogate-Key`, space-separated | 16 KB, 1 KB per key, 256 per purge | `POST /service/{id}/purge` | `purge_all`, or soft-purge an `all` key |
 | Bunny | `Cache-Control` (overrides the browser header) | `CDN-Tag` | 1,024 bytes | `POST /pullzone/{id}/purgeCache` | `purgeCache` with no tag |

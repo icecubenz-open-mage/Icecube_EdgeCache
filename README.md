@@ -73,7 +73,7 @@ System > Configuration > Advanced > Edge Cache.
 | Adapter | TTL header | Tag header | Purges |
 | --- | --- | --- | --- |
 | Noop | `X-Edge-Cache-Control` | `X-Edge-Tags` | Logged only. For development and tests |
-| Cloudflare | `CDN-Cache-Control` | `Cache-Tag` | Zone purge API, by tag, URL or everything |
+| Cloudflare | `CDN-Cache-Control` | `Cache-Tag` | Zone purge API, by tag, URL or everything. `invalidateAll()` marks everything stale for a deploy script |
 | Varnish | `CDN-Cache-Control` | `xkey` | `PURGE` with `xkey` to every node, `BAN` per store host for everything. Needs `vmod_xkey` |
 
 Cloudflare doesn't cache HTML by default. Add a Cache Rule that makes the storefront eligible for cache and respects the origin's cache headers, and exclude admin and API paths from it.

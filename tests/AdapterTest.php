@@ -30,7 +30,7 @@ function recordingClient(array &$requests, string $body = '{"success":true,"erro
 
 function configureCloudflare(): void
 {
-    currentStore()->setConfig(Cloudflare::XML_PATH_ZONE_ID, '023e105f4ecef8ad9ca31a8372d0c353');
+    currentStore()->setConfig(Cloudflare::XML_PATH_ZONE_ID, 'example-zone-id');
     currentStore()->setConfig(Cloudflare::XML_PATH_API_TOKEN, Mage::helper('core')->encrypt('secret-token'));
 }
 
@@ -44,7 +44,7 @@ it('purges Cloudflare by tag the way the zone purge API documents', function ():
 
     expect($requests)->toHaveCount(1)
         ->and($requests[0]['method'])->toBe('POST')
-        ->and($requests[0]['url'])->toBe('https://api.cloudflare.com/client/v4/zones/023e105f4ecef8ad9ca31a8372d0c353/purge_cache')
+        ->and($requests[0]['url'])->toBe('https://api.cloudflare.com/client/v4/zones/example-zone-id/purge_cache')
         ->and($requests[0]['headers'])->toContain('Authorization: Bearer secret-token')
         ->and($requests[0]['headers'])->toContain('Content-Type: application/json')
         ->and(json_decode($requests[0]['body'], true))->toBe(['tags' => ['p12', 'c3']]);
@@ -60,6 +60,20 @@ it('purges Cloudflare by URL and purges everything on its own', function (): voi
 
     expect(json_decode($requests[0]['body'], true))->toBe(['files' => ['https://shop.example/a/']])
         ->and(json_decode($requests[1]['body'], true))->toBe(['purge_everything' => true]);
+});
+
+it('invalidates everything through the zone invalidate API', function (): void {
+    configureCloudflare();
+    $requests = [];
+
+    Mage::getModel('edgecache/adapter_cloudflare')
+        ->setHttpClient(recordingClient($requests))
+        ->invalidateAll();
+
+    expect($requests)->toHaveCount(1)
+        ->and($requests[0]['url'])->toBe('https://api.cloudflare.com/client/v4/zones/example-zone-id/invalidate_cache')
+        ->and($requests[0]['headers'])->toContain('Authorization: Bearer secret-token')
+        ->and(json_decode($requests[0]['body'], true))->toBe(['purge_everything' => true]);
 });
 
 it('throws on a rate limited or refused Cloudflare purge so the queue retries it', function (int $status, string $body): void {

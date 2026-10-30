@@ -23,15 +23,25 @@ class Icecube_EdgeCache_Model_Policy
      */
     public const IMAGE_CONTROLLER_CLASS = 'Mage_Core_ImageController';
 
+    /** The signed resize URL that releases before the image route printed in pages and emails */
+    public const IMAGE_RESIZE_ACTION = 'core_index_resize';
+
     /** The last front action dispatched, forwards included, so the one that rendered the response */
     private ?Mage_Core_Controller_Front_Action $action = null;
 
     private bool $frontendAction = false;
 
+    /**
+     * Runs for every action a request dispatches, forwards included, before the session would
+     * start, and skips the session for a page that can be shared.
+     */
     public function setAction(Mage_Core_Controller_Varien_Action $action): void
     {
         $this->action = $action instanceof Mage_Core_Controller_Front_Action ? $action : null;
         $this->frontendAction = $this->frontendAction || $this->action !== null;
+        if ($this->action !== null && $this->canRenderWithoutSession($this->action)) {
+            $this->action->setFlag('', Mage_Core_Controller_Varien_Action::FLAG_NO_START_SESSION, true);
+        }
     }
 
     public function isSessionless(): bool
@@ -115,9 +125,9 @@ class Icecube_EdgeCache_Model_Policy
     }
 
     /**
-     * Full action name of the response when core rendered it without a session for sharing,
-     * null otherwise. The flag is read now rather than when the action starts, so an observer
-     * that sets or clears it after ours still counts. Actions outside core's list skip the
+     * Full action name of the response when it rendered without a session for sharing, null
+     * otherwise. The flag is read now rather than when the action starts, so an observer that
+     * sets or clears it after ours still counts. Actions off the cacheable list skip the
      * session for reasons of their own and are left alone.
      */
     private function getSessionlessAction(): ?string
@@ -127,16 +137,39 @@ class Icecube_EdgeCache_Model_Policy
         if ($action === null
             || !$action->getFlag('', Mage_Core_Controller_Varien_Action::FLAG_NO_START_SESSION)
             || !$helper->isEnabled()
-            || !$helper->isCoreSessionlessEnabled()
+            || !$helper->hasCoreFormKeyFallback()
+            || !$helper->isCacheableAction($action->getFullActionName())
         ) {
             return null;
         }
 
-        if (!$helper->isCoreSessionlessRoute($action->getFullActionName('/'))) {
-            return null;
+        return $action->getFullActionName();
+    }
+
+    private function canRenderWithoutSession(Mage_Core_Controller_Front_Action $action): bool
+    {
+        $helper = Mage::helper('edgecache');
+        if (!$helper->isEnabled() || !in_array($action->getRequest()->getMethod(), ['GET', 'HEAD'], true)) {
+            return false;
+        }
+        // It only redirects to the image file, the same for every visitor, so a first visit
+        // from an old email or page shouldn't get a session cookie from an image.
+        if ($action->getFullActionName() === self::IMAGE_RESIZE_ACTION) {
+            return true;
         }
 
-        return $action->getFullActionName();
+        return $helper->hasCoreFormKeyFallback()
+            && !$this->hasBypassCookie($action->getRequest())
+            && $helper->isCacheableAction($action->getFullActionName());
+    }
+
+    private function hasBypassCookie(Mage_Core_Controller_Request_Http $request): bool
+    {
+        return array_any(Mage::helper('edgecache')->getBypassCookies(), function (string $name) use ($request): bool {
+            $value = $request->getCookie($name);
+
+            return is_string($value) && $value !== '';
+        });
     }
 
     /**
@@ -153,7 +186,7 @@ class Icecube_EdgeCache_Model_Policy
         if (Mage::helper('edgecache')->hasDesignUserAgentExceptions()) {
             return 'a design exception picks the theme by User-Agent';
         }
-        // Core blanks the key in postDispatch, so one still here was printed after that.
+        // Core prints no key without a session, so one here came from a module that made its own.
         $formKey = Mage::getSingleton('core/session')->getData('_form_key');
         $body = $response->getBody();
         if (is_string($formKey) && $formKey !== '' && is_string($body) && str_contains($body, $formKey)) {

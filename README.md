@@ -1,15 +1,16 @@
 # Icecube_EdgeCache
 
-Edge caching for [Maho](https://mahocommerce.com), built on Maho's sessionless pages option (`web/sessionless`), [proposed upstream](https://github.com/mahocommerce/maho/discussions/608). With that option, Maho renders a new visitor's storefront page without a session, so it carries no `Set-Cookie` and no form key. This module marks those responses cacheable for a CDN or reverse proxy, tags them with the products, categories, CMS pages and blocks they show, and purges those tags through Maho's queue when the admin saves something.
+Edge caching for [Maho](https://mahocommerce.com). The module renders the storefront pages on its list without a session for a visitor who has none, through the `controller_action_predispatch_session_start` event, so the page carries no `Set-Cookie`. Core sends such a page with an empty form key and fetches a real one in the browser before the first POST. The module marks those responses cacheable for a CDN or reverse proxy, tags them with the products, categories, CMS pages and blocks they show, and purges those tags through Maho's queue when the admin saves something.
 
-- Observers only: no class rewrites, no core edits, no frontend JavaScript. Core's `js.js` fetches a form key on the first POST.
+- Observers only: no class rewrites, no core edits, no frontend JavaScript. Core's `js.js` fetches the form key.
 - Adapters for Cloudflare and Varnish (xkey), plus a no-op adapter that logs purges. Adding another CDN is one class and one config node.
 
 The design notes, including the header rules, the purge and retry behaviour, known gaps and a sample VCL, are in [docs/design/edge-cache.md](docs/design/edge-cache.md).
 
 ## Requirements
 
-- Maho 26.9 or later, or `dev-main`. The module caches only on a Maho that has the sessionless pages option, which no release has yet. On one without it, the module installs and does nothing: every storefront response gets the uncacheable headers. On Maho 26.9.2, stay on 0.1.x (`composer require icecube/edge-cache:^0.1`), which caches without the option.
+- Maho 26.9 or later, or `dev-main`.
+- Core's form key for pages without a session: an empty `FORM_KEY` with `FORM_KEY_URL` in the head, and a `js.js` that fetches the key before the first POST. It's proposed for Maho and no release has it yet. On a Maho without it the module caches nothing and keeps every session except on the legacy image resize URL, because a page rendered without a session would hold a form key no session knows and its forms would fail. On Maho 26.9.2, stay on 0.1.x (`composer require icecube/edge-cache:^0.1`), which swaps the key with its own JavaScript.
 - PHP 8.5
 - A running queue worker (`./maho queue:work`). Purges are queue messages, and without a worker they sit in the queue table. The module routes its `edgecache` queue to Maho's `fast` pool.
 
@@ -19,23 +20,29 @@ The package isn't on Packagist, so add the repository first:
 
 ```sh
 composer config repositories.edge-cache vcs https://github.com/icecubenz-open-mage/Icecube_EdgeCache
-composer require icecube/edge-cache:^0.2
+composer require icecube/edge-cache:^0.3
 ./maho cache:flush
 ```
 
 It's a `maho-module` package, so maho-composer-plugin picks it up from `vendor/` like any other module. The module is off until you enable it.
 
-Then turn on System > Configuration > General > Web > Pages Without a Session (`web/sessionless/enabled`). With that off nothing renders without a session, and this module caches nothing. Core's route list there decides which pages are cached; add `catalogsearch/result/index` and `cms/index/noRoute` for search results and 404s, and your blog's routes if you have one.
+Cacheable Pages (`edgecache/general/cacheable_actions`) decides which pages render without a session and are cached. The default covers the home page, CMS pages, categories, products, search results, the 404 page and the blog.
 
 Nothing is cached while the store has a design exception by User-Agent (System > Configuration > Design), since the CDN would hand one visitor's theme to everyone.
 
+## Upgrading from 0.2.x
+
+0.3.0 is a breaking change, so `composer update` keeps a project on `^0.2`. Move with `composer require icecube/edge-cache:^0.3`. In 0.3 the module decides which pages skip the session, and doesn't read core's `web/sessionless` settings.
+
+- `web/sessionless/routes` maps to `edgecache/general/cacheable_actions`. Write each route as a full action name: `catalog/product/view` becomes `catalog_product_view`.
+- `web/sessionless/cookies` maps to `edgecache/general/bypass_cookies`, one name per line. The session cookies always count and don't need listing.
+- If your Maho has `web/sessionless/enabled`, turn it off, so the module's list is the only one.
+- Rows for `edgecache/general/cacheable_actions` or `bypass_cookies` left in `core_config_data` from 0.1 take effect again. Check them, or delete them to get the defaults.
+- The default list adds search results, the 404 page and the blog to core's old default of home, CMS pages, categories and products.
+
 ## Upgrading from 0.1.x
 
-0.2.0 is a breaking change, so `composer update` keeps a project on `^0.1`. Move with `composer require icecube/edge-cache:^0.2`. The module no longer renders pages without a session or swaps the form key itself: the sentinel, `edgecache.js`, the inline head script, `/edgecache/state` and the `edgecache_s` cookie are gone.
-
-- `edgecache/general/cacheable_actions` is replaced by core's `web/sessionless/routes`, written as `module/controller/action`.
-- `edgecache/general/bypass_cookies` is replaced by core's `web/sessionless/cookies`.
-- Both old settings are ignored. Their rows in `core_config_data` can be deleted.
+Move with `composer require icecube/edge-cache:^0.3`. The settings keep their names and meaning. The sentinel, `edgecache.js`, the inline head script, `/edgecache/state` and the `edgecache_s` cookie are gone: the form key comes from core's `js.js`, so 0.3 needs a Maho with that (see Requirements).
 
 ## Configuration
 
@@ -45,10 +52,12 @@ System > Configuration > Advanced > Edge Cache.
 | --- | --- | --- |
 | `edgecache/general/enabled` | `0` | Turns the module on. Website and store view scope work too |
 | `edgecache/general/adapter` | `noop` | `noop`, `cloudflare` or `varnish` |
+| `edgecache/general/cacheable_actions` | home, CMS pages, categories, products, search, 404, blog | Full action names, one per line. These render without a session for a visitor who has none, and are cached |
+| `edgecache/general/bypass_cookies` | `store`, `user_allowed_save_cookie`, `maho_a11y_scan` | Cookie names, one per line. A request with any of them, or a session cookie, keeps its session and isn't cached |
 | `edgecache/general/ttl` | `86400` | Edge TTL in seconds. Browsers always revalidate |
 | `edgecache/general/stale_while_revalidate` | `86400` | Seconds |
 | `edgecache/general/stale_if_error` | `604800` | Seconds |
-| `edgecache/general/short_ttl_actions` | search results, 404 | Full action names no tag can purge, so they get the short TTL. They're only cached once core's route list has them |
+| `edgecache/general/short_ttl_actions` | search results, 404 | Full action names no tag can purge, so they get the short TTL. They're only cached while Cacheable Pages has them too |
 | `edgecache/general/short_ttl` | `300` | Seconds. `0` stops those pages being cached |
 | `edgecache/general/tag_prefix` | empty | Keeps environments that share one CDN zone apart, e.g. `stg-` |
 | `edgecache/general/purge_delay` | `15` | Seconds a purge waits so a burst of saves goes out as one call. See the design notes for sizing it to your CDN's rate limit |
@@ -64,23 +73,30 @@ System > Configuration > Advanced > Edge Cache.
 | Adapter | TTL header | Tag header | Purges |
 | --- | --- | --- | --- |
 | Noop | `X-Edge-Cache-Control` | `X-Edge-Tags` | Logged only. For development and tests |
-| Cloudflare | `CDN-Cache-Control` | `Cache-Tag` | Zone purge API, by tag, URL or everything |
+| Cloudflare | `CDN-Cache-Control` | `Cache-Tag` | Zone purge API, by tag, URL or everything. `invalidateAll()` marks everything stale for a deploy script |
 | Varnish | `CDN-Cache-Control` | `xkey` | `PURGE` with `xkey` to every node, `BAN` per store host for everything. Needs `vmod_xkey` |
 
 Cloudflare doesn't cache HTML by default. Add a Cache Rule that makes the storefront eligible for cache and respects the origin's cache headers, and exclude admin and API paths from it.
+
+Two zone settings undo the module's headers:
+
+- Browser Cache TTL must stay on Respect Existing Headers, or set to Respect origin in the Cache Rule. Any other value replaces a lower `max-age`, so browsers would keep a page for that long whatever a purge does ([Browser Cache TTL](https://developers.cloudflare.com/cache/how-to/edge-browser-cache-ttl/#browser-cache-ttl)).
+- Always Online must be off. With it on, Cloudflare ignores `stale-while-revalidate` and `stale-if-error` ([Cache-Control directives](https://developers.cloudflare.com/cache/concepts/cache-control/#revalidation)).
+
+Turn on Tiered Cache with the Smart topology, which every plan has, so data centres fill from one upper tier near the origin rather than each going to the origin.
 
 For Varnish, start from the sample VCL in the design notes.
 
 ## The CDN must bypass on the same cookies
 
-Core only renders a page without a session for a request with none of these cookies. The CDN has to skip its cache for exactly the same set, or it will serve the shared page to a visitor the origin would have rendered differently (a logged-in customer, another store view, someone who declined cookies).
+The module only renders a page without a session for a request with none of these cookies. The CDN has to skip its cache for exactly the same set, or it will serve the shared page to a visitor the origin would have rendered differently (a logged-in customer, another store view, someone who declined cookies).
 
 Bypass the cache when the request carries any of:
 
 - `maho_session`, `frontend`, `om_frontend` (the session cookies)
-- every name in core's `web/sessionless/cookies`
+- every name in `edgecache/general/bypass_cookies`
 
-In Cloudflare that's a condition on the Cache Rule (or a separate Bypass cache rule) on `http.cookie`. The sample VCL does it in `vcl_recv`. If you add a cookie to core's list, add it at the CDN too.
+In Cloudflare that's a condition on the Cache Rule (or a separate Bypass cache rule) on `http.cookie`. The sample VCL does it in `vcl_recv`. If you add a cookie to the list, add it at the CDN too.
 
 ## Adding a CDN
 

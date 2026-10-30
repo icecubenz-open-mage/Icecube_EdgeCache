@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Cloudflare: CDN-Cache-Control for the edge TTL, Cache-Tag for tags, the zone purge API.
+ * Cloudflare: CDN-Cache-Control for the edge TTL, Cache-Tag for tags, the zone purge and invalidate APIs.
  *
  * HTML is only cached once a Cache Rule makes it eligible; see README.md.
  *
@@ -12,13 +12,14 @@
 
 declare(strict_types=1);
 
-class Icecube_EdgeCache_Model_Adapter_Cloudflare extends Icecube_EdgeCache_Model_Adapter_AbstractHttp
+class Icecube_EdgeCache_Model_Adapter_Cloudflare extends Icecube_EdgeCache_Model_Adapter_AbstractHttp implements Icecube_EdgeCache_Model_Adapter_InvalidatesInterface
 {
     public const XML_PATH_ZONE_ID = 'edgecache/cloudflare/zone_id';
     public const XML_PATH_API_TOKEN = 'edgecache/cloudflare/api_token';
     public const XML_PATH_HEADER = 'edgecache/cloudflare/header';
 
     public const API_URL = 'https://api.cloudflare.com/client/v4/zones/%s/purge_cache';
+    public const INVALIDATE_API_URL = 'https://api.cloudflare.com/client/v4/zones/%s/invalidate_cache';
     public const TAG_HEADER = 'Cache-Tag';
 
     /** Proxied on to any CDN behind Cloudflare; the Cloudflare- variant is not */
@@ -78,11 +79,21 @@ class Icecube_EdgeCache_Model_Adapter_Cloudflare extends Icecube_EdgeCache_Model
     }
 
     /**
+     * Takes the body of a purge; the endpoint decides that the pages stay, marked stale.
+     * Maho sends no ETag or Last-Modified for a page, so each one is fetched again in full.
+     */
+    #[\Override]
+    public function invalidateAll(): void
+    {
+        $this->purge(['purge_everything' => true], self::INVALIDATE_API_URL);
+    }
+
+    /**
      * Cloudflare takes one purge type per call.
      *
      * @param array<string, mixed> $body
      */
-    private function purge(array $body): void
+    private function purge(array $body, string $apiUrl = self::API_URL): void
     {
         $zoneId = $this->getConfig(self::XML_PATH_ZONE_ID);
         $token = Mage::helper('core')->decrypt($this->getConfig(self::XML_PATH_API_TOKEN));
@@ -90,7 +101,7 @@ class Icecube_EdgeCache_Model_Adapter_Cloudflare extends Icecube_EdgeCache_Model
             throw new RuntimeException('Cloudflare purge needs a zone ID and an API token');
         }
 
-        $response = $this->getHttpClient()->request('POST', sprintf(self::API_URL, rawurlencode($zoneId)), [
+        $response = $this->getHttpClient()->request('POST', sprintf($apiUrl, rawurlencode($zoneId)), [
             'auth_bearer' => $token,
             'json' => $body,
         ]);

@@ -1,6 +1,6 @@
 {
     "name": "icecube/edge-cache",
-    "description": "CDN-agnostic edge caching for Maho: caches the pages core renders without a session, with cache tags and queued purges",
+    "description": "CDN-agnostic edge caching for Maho: renders listed pages without a session and caches them, with cache tags and queued purges",
     "license": "OSL-3.0",
     "type": "maho-module",
     "authors": [

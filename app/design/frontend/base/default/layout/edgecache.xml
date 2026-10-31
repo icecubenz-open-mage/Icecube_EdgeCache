@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<!--
+SPDX-FileCopyrightText: 2026 Icecube
+SPDX-License-Identifier: OSL-3.0
+-->
+<layout version="0.1.0">
+    <!-- Added to a page that renders without a session (Icecube_EdgeCache_Model_Observer::addSessionlessHandle) -->
+    <edgecache_sessionless>
+        <reference name="head">
+            <action method="addItem"><type>skin_js</type><name>js/edgecache.js</name><params>defer</params></action>
+            <block type="edgecache/formKey" name="edgecache.form_key"/>
+        </reference>
+    </edgecache_sessionless>
+</layout>

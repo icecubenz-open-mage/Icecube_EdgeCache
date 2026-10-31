@@ -32,20 +32,6 @@ function strayFormKey(): string
     return is_string($formKey) ? $formKey : '';
 }
 
-/**
- * Stands in for a Maho that has no Mage_Core_Model_Session::FORM_KEY_ROUTE.
- */
-function withoutCoreFormKeyFallback(): void
-{
-    Mage::register('_helper/edgecache', new class extends Icecube_EdgeCache_Helper_Data {
-        #[\Override]
-        public function hasCoreFormKeyFallback(): bool
-        {
-            return false;
-        }
-    });
-}
-
 function skipsSession(Mage_Core_Controller_Front_Action $action): bool
 {
     return (bool) $action->getFlag('', Mage_Core_Controller_Varien_Action::FLAG_NO_START_SESSION);
@@ -157,18 +143,15 @@ it('reads the cacheable list one name per line, splitting on spaces and commas t
     'empty' => ['', false],
 ]);
 
-it('skips the session on the legacy resize URL whatever cookies the request carries', function (bool $fallback): void {
+it('skips the session on the legacy resize URL whatever cookies the request carries', function (): void {
     // Core without resize-without-session would start one, and the image would hand out the cookie
-    if (!$fallback) {
-        withoutCoreFormKeyFallback();
-    }
     currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '1');
     $action = frontAction('core/index/resize', cookies: ['maho_session' => 'x', 'store' => 'default']);
 
     Mage::getSingleton('edgecache/policy')->setAction($action);
 
     expect(skipsSession($action))->toBeTrue();
-})->with(['with core form key fallback' => true, 'without it' => false]);
+});
 
 it('leaves an action off the list alone', function (): void {
     $action = frontAction('customer/account/login');
@@ -179,9 +162,9 @@ it('leaves an action off the list alone', function (): void {
         ->and($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('no-store');
 });
 
-it('never skips the session on core form key route, even when it is listed', function (): void {
-    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_CACHEABLE_ACTIONS, "catalog_product_view\ncore_index_formKey");
-    $action = frontAction('core/index/formKey');
+it('never skips the session on the form key route, even when it is listed', function (): void {
+    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_CACHEABLE_ACTIONS, "catalog_product_view\n" . Icecube_EdgeCache_Helper_Data::FORM_KEY_ACTION);
+    $action = frontAction('edgecache/formkey/index');
 
     $response = sessionlessResponse(200, action: $action);
 
@@ -246,19 +229,18 @@ it('does nothing while the module is disabled', function (): void {
         ->and($response->getSymfonyResponse()->headers->has('X-Edge-Cache-Control'))->toBeFalse();
 });
 
-it('keeps the session and caches nothing on a Maho without the core form key fallback', function (): void {
-    // Without it the page would carry a key no session knows, and every form on it would fail
-    withoutCoreFormKeyFallback();
-    $action = frontAction();
+it('gives a page that renders without a session the layout handle that loads edgecache.js', function (bool $listed): void {
+    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '1');
+    $action = frontAction($listed ? 'catalog/product/view' : 'customer/account/login');
+    Mage::getSingleton('edgecache/policy')->setAction($action);
+    $layout = Mage::app()->getLayout();
 
-    $response = sessionlessResponse(200, action: $action);
+    Mage::dispatchEvent('controller_action_layout_load_before', ['action' => $action, 'layout' => $layout]);
 
-    expect(skipsSession($action))->toBeFalse()
-        ->and(Mage::getSingleton('edgecache/policy')->isSessionless())->toBeFalse()
-        ->and($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('no-store');
-});
+    expect(in_array(Icecube_EdgeCache_Model_Observer::SESSIONLESS_HANDLE, $layout->getUpdate()->getHandles(), true))->toBe($listed);
+})->with(['listed' => true, 'off the list' => false]);
 
-it('does not cache a page that still carries a form key', function (): void {
+it('does not cache a page that still carries a form key, as a Maho that makes one up without a session prints', function (): void {
     $response = sessionlessResponse(200, body: '<p>' . strayFormKey() . '</p>');
 
     expect($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('no-store');

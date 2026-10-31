@@ -10,6 +10,8 @@ declare(strict_types=1);
 
 class Icecube_EdgeCache_Model_Observer
 {
+    public const SESSIONLESS_HANDLE = 'edgecache_sessionless';
+
     /**
      * Fires for every action, forwards and core's image resize included, before the session
      * would start.
@@ -20,6 +22,18 @@ class Icecube_EdgeCache_Model_Observer
         $action = $observer->getEvent()->getData('controller_action');
         if ($action instanceof Mage_Core_Controller_Varien_Action) {
             Mage::getSingleton('edgecache/policy')->setAction($action);
+        }
+    }
+
+    /**
+     * A page that renders without a session gets edgecache.js, which fetches a form key before the first POST
+     */
+    #[Maho\Config\Observer('controller_action_layout_load_before', id: 'edgecache_add_sessionless_handle')]
+    public function addSessionlessHandle(\Maho\Event\Observer $observer): void
+    {
+        $layout = $observer->getEvent()->getData('layout');
+        if ($layout instanceof Mage_Core_Model_Layout && Mage::getSingleton('edgecache/policy')->isSessionless()) {
+            $layout->getUpdate()->addHandle(self::SESSIONLESS_HANDLE);
         }
     }
 

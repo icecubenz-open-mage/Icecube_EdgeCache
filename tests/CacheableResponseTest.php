@@ -67,6 +67,47 @@ it('caches a page rendered without a session, tagged', function (string $path, s
     'product' => ['/edgecache-product/', 'p', 'product'],
 ]);
 
+it('loads edgecache.js and names the form key URL on a page rendered without a session', function (): void {
+    $body = HttpServer::request('GET', '/edgecache-product/')->getContent();
+
+    expect($body)->toMatch('#<script[^>]+src="[^"]*/js/edgecache\.js[^"]*"[^>]*defer#')
+        ->and($body)->toContain('var EDGECACHE_FORM_KEY_URL = ' . json_encode(Mage::getUrl(Icecube_EdgeCache_Helper_Data::FORM_KEY_ROUTE), JSON_UNESCAPED_SLASHES) . ';');
+});
+
+it('leaves edgecache.js out of a page for a visitor with a session', function (): void {
+    $body = HttpServer::request('GET', '/edgecache-product/', ['Cookie' => 'maho_session=' . str_repeat('a', 32)])->getContent();
+
+    expect($body)->not->toContain('edgecache.js')
+        ->and($body)->not->toContain('EDGECACHE_FORM_KEY_URL');
+});
+
+it('hands out the form key of a new session, which no cache may keep', function (): void {
+    $response = HttpServer::request('GET', '/edgecache/formkey/');
+    $formKey = json_decode($response->getContent(), true)['form_key'] ?? null;
+
+    expect($response->getStatusCode())->toBe(200)
+        ->and($formKey)->toBeString()->toHaveLength(16)
+        ->and(implode("\n", edgeHeader($response, 'Set-Cookie')))->toContain('maho_session=')
+        ->and(edgeHeader($response, 'Cache-Control')[0] ?? '')->toContain('no-store')
+        ->and(edgeHeader($response, 'X-Edge-Cache-Control'))->toBe(['no-store']);
+});
+
+it('takes a POST with the key the form key URL handed out', function (): void {
+    $ids = Catalogue::ensure();
+    $response = HttpServer::request('GET', '/edgecache/formkey/');
+    $formKey = json_decode($response->getContent(), true)['form_key'];
+    $cookie = explode(';', edgeHeader($response, 'Set-Cookie')[0])[0];
+
+    $post = HttpServer::request('POST', '/checkout/cart/add/', ['Cookie' => $cookie, 'X-Requested-With' => 'XMLHttpRequest'], [
+        'form_key' => $formKey,
+        'product' => (string) $ids['product'],
+        'qty' => '1',
+        'isAjax' => '1',
+    ]);
+
+    expect($post->getContent(false))->toContain('"success":true');
+});
+
 it('tags a category page with the products it lists', function (): void {
     $ids = Catalogue::ensure();
 

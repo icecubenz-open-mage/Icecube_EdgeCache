@@ -137,7 +137,6 @@ class Icecube_EdgeCache_Model_Policy
         if ($action === null
             || !$action->getFlag('', Mage_Core_Controller_Varien_Action::FLAG_NO_START_SESSION)
             || !$helper->isEnabled()
-            || !$helper->hasCoreFormKeyFallback()
             || !$helper->isCacheableAction($action->getFullActionName())
         ) {
             return null;
@@ -158,8 +157,7 @@ class Icecube_EdgeCache_Model_Policy
             return true;
         }
 
-        return $helper->hasCoreFormKeyFallback()
-            && !$this->hasBypassCookie($action->getRequest())
+        return !$this->hasBypassCookie($action->getRequest())
             && $helper->isCacheableAction($action->getFullActionName());
     }
 
@@ -186,7 +184,8 @@ class Icecube_EdgeCache_Model_Policy
         if (Mage::helper('edgecache')->hasDesignUserAgentExceptions()) {
             return 'a design exception picks the theme by User-Agent';
         }
-        // Core prints no key without a session, so one here came from a module that made its own.
+        // Core prints an empty key without a session. One here came from a Maho whose getFormKey()
+        // makes one up, or from a module that called renewFormKey(), and belongs to no visitor's session.
         $formKey = Mage::getSingleton('core/session')->getData('_form_key');
         $body = $response->getBody();
         if (is_string($formKey) && $formKey !== '' && is_string($body) && str_contains($body, $formKey)) {

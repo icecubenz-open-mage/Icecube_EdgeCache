@@ -1,8 +1,8 @@
 # Icecube_EdgeCache
 
-Edge caching for [Maho](https://mahocommerce.com). The module renders the storefront pages on its list without a session for a visitor who has none, through the `controller_action_predispatch_session_start` event, so the page carries no `Set-Cookie`. Core sends such a page with an empty form key and fetches a real one in the browser before the first POST. The module marks those responses cacheable for a CDN or reverse proxy, tags them with the products, categories, CMS pages and blocks they show, and purges those tags through Maho's queue when the admin saves something.
+Edge caching for [Maho](https://mahocommerce.com). The module renders the storefront pages on its list without a session for a visitor who has none, through the `controller_action_predispatch_session_start` event, so the page carries no `Set-Cookie`. Core sends such a page with an empty form key, and the module's `edgecache.js` fetches a real one before the first POST. The module marks those responses cacheable for a CDN or reverse proxy, tags them with the products, categories, CMS pages and blocks they show, and purges those tags through Maho's queue when the admin saves something.
 
-- Observers only: no class rewrites, no core edits, no frontend JavaScript. Core's `js.js` fetches the form key.
+- Observers only: no class rewrites, no core edits. One deferred script, `edgecache.js`, on the pages rendered without a session.
 - Adapters for Cloudflare and Varnish (xkey), plus a no-op adapter that logs purges. Adding another CDN is one class and one config node.
 
 The design notes, including the header rules, the purge and retry behaviour, known gaps and a sample VCL, are in [docs/design/edge-cache.md](docs/design/edge-cache.md).
@@ -10,7 +10,7 @@ The design notes, including the header rules, the purge and retry behaviour, kno
 ## Requirements
 
 - Maho 26.9 or later, or `dev-main`.
-- Core's form key for pages without a session: an empty `FORM_KEY` with `FORM_KEY_URL` in the head, and a `js.js` that fetches the key before the first POST. It's proposed for Maho and no release has it yet. On a Maho without it the module caches nothing and keeps every session except on the legacy image resize URL, because a page rendered without a session would hold a form key no session knows and its forms would fail. On Maho 26.9.2, stay on 0.1.x (`composer require icecube/edge-cache:^0.1`), which swaps the key with its own JavaScript.
+- For caching, a Maho whose `getFormKey()` returns an empty string while no session has started, as Maho's `docs/hosting/edge-caching.md` says. It's proposed for Maho and no release has it yet. On a Maho without it, listed pages still render without a session and their forms work, but the module caches nothing and logs why to `var/log/edgecache.log`.
 - PHP 8.5
 - A running queue worker (`./maho queue:work`). Purges are queue messages, and without a worker they sit in the queue table. The module routes its `edgecache` queue to Maho's `fast` pool.
 
@@ -36,13 +36,13 @@ Nothing is cached while the store has a design exception by User-Agent (System >
 
 - `web/sessionless/routes` maps to `edgecache/general/cacheable_actions`. Write each route as a full action name: `catalog/product/view` becomes `catalog_product_view`.
 - `web/sessionless/cookies` maps to `edgecache/general/bypass_cookies`, one name per line. The session cookies always count and don't need listing.
-- If your Maho has `web/sessionless/enabled`, turn it off, so the module's list is the only one.
+- If your Maho was patched with the `web/sessionless/*` option that 0.2 used, which Maho never merged, turn `web/sessionless/enabled` off, so the module's list is the only one.
 - Rows for `edgecache/general/cacheable_actions` or `bypass_cookies` left in `core_config_data` from 0.1 take effect again. Check them, or delete them to get the defaults.
 - The default list adds search results, the 404 page and the blog to core's old default of home, CMS pages, categories and products.
 
 ## Upgrading from 0.1.x
 
-Move with `composer require icecube/edge-cache:^0.3`. The settings keep their names and meaning. The sentinel, `edgecache.js`, the inline head script, `/edgecache/state` and the `edgecache_s` cookie are gone: the form key comes from core's `js.js`, so 0.3 needs a Maho with that (see Requirements).
+Move with `composer require icecube/edge-cache:^0.3`. The settings keep their names and meaning. The sentinel, `/edgecache/state` and the `edgecache_s` cookie are gone. Core prints an empty form key on a page rendered without a session (see Requirements), and `edgecache.js` fetches one from `/edgecache/formkey/`, only on those pages.
 
 ## Configuration
 

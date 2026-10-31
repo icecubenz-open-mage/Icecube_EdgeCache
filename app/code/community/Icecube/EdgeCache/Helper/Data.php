@@ -25,12 +25,9 @@ class Icecube_EdgeCache_Helper_Data extends Mage_Core_Helper_Abstract
     public const XML_PATH_PURGE_DELAY = 'edgecache/general/purge_delay';
     public const XML_PATH_ADAPTERS = 'global/edgecache/adapters';
 
-    /**
-     * Core's form key endpoint, Mage_Core_Model_Session::FORM_KEY_ROUTE as a full action name,
-     * written out because a Maho without the fallback has no such constant. It hands the
-     * visitor a key and must start their session, so it never skips it, listed or not.
-     */
-    public const FORM_KEY_ACTION = 'core_index_formKey';
+    /** Where edgecache.js fetches the form key. It must start the session, so it never skips it, listed or not. */
+    public const FORM_KEY_ROUTE = 'edgecache/formkey';
+    public const FORM_KEY_ACTION = 'edgecache_formkey_index';
 
     /** Mage_Core_Model_Design_Package::_checkUserAgentAgainstRegexps() reads these */
     public const XML_PATHS_DESIGN_UA_REGEXP = [
@@ -98,16 +95,6 @@ class Icecube_EdgeCache_Helper_Data extends Mage_Core_Helper_Abstract
             ...Mage_Core_Controller_Front_Action::SESSION_LEGACY_NAMESPACES,
             ...$this->getList(self::XML_PATH_BYPASS_COOKIES),
         ]));
-    }
-
-    /**
-     * Core sends a page rendered without a session with an empty form key, and its js.js
-     * fetches a real one from FORM_KEY_ROUTE before the first POST. On a Maho without that,
-     * the page would hold a key no session knows, so every form on it would fail.
-     */
-    public function hasCoreFormKeyFallback(): bool
-    {
-        return defined('Mage_Core_Model_Session::FORM_KEY_ROUTE');
     }
 
     /**

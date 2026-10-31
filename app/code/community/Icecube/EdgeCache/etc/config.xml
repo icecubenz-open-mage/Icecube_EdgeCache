@@ -15,6 +15,11 @@ SPDX-License-Identifier: OSL-3.0
                 <class>Icecube_EdgeCache_Model</class>
             </edgecache>
         </models>
+        <blocks>
+            <edgecache>
+                <class>Icecube_EdgeCache_Block</class>
+            </edgecache>
+        </blocks>
         <helpers>
             <edgecache>
                 <class>Icecube_EdgeCache_Helper</class>
@@ -44,6 +49,15 @@ SPDX-License-Identifier: OSL-3.0
             </routing>
         </queue>
     </global>
+    <frontend>
+        <layout>
+            <updates>
+                <edgecache>
+                    <file>edgecache.xml</file>
+                </edgecache>
+            </updates>
+        </layout>
+    </frontend>
     <default>
         <edgecache>
             <general>

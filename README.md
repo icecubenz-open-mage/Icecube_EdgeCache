@@ -1,6 +1,6 @@
 # Icecube_EdgeCache
 
-Edge caching for [Maho](https://mahocommerce.com). The module renders the storefront pages on its list without a session for a visitor who has none, through the `controller_action_predispatch_session_start` event, so the page carries no `Set-Cookie`. Core sends such a page with an empty form key, and the module's `edgecache.js` fetches a real one before the first POST. The module marks those responses cacheable for a CDN or reverse proxy, tags them with the products, categories, CMS pages and blocks they show, and purges those tags through Maho's queue when the admin saves something.
+Edge caching for [Maho](https://mahocommerce.com). The module renders the storefront pages on its list without a session for a visitor who has none, or whose session stores nothing, through the `controller_action_predispatch_session_start` event, so the page carries no `Set-Cookie`. Core sends such a page with an empty form key, and the module's `edgecache.js` fetches a real one before the first POST. The module marks those responses cacheable for a CDN or reverse proxy, tags them with the products, categories, CMS pages and blocks they show, and purges those tags through Maho's queue when the admin saves something.
 
 - Observers only: no class rewrites, no core edits. One deferred script, `edgecache.js`, on the pages rendered without a session.
 - Adapters for Cloudflare and Varnish (xkey), plus a no-op adapter that logs purges. Adding another CDN is one class and one config node.
@@ -20,7 +20,7 @@ The package isn't on Packagist, so add the repository first:
 
 ```sh
 composer config repositories.edge-cache vcs https://github.com/icecubenz-open-mage/Icecube_EdgeCache
-composer require icecube/edge-cache:^0.3
+composer require icecube/edge-cache:^0.3.1
 ./maho cache:flush
 ```
 
@@ -29,6 +29,14 @@ It's a `maho-module` package, so maho-composer-plugin picks it up from `vendor/`
 Cacheable Pages (`edgecache/general/cacheable_actions`) decides which pages render without a session and are cached. The default covers the home page, CMS pages, categories, products, search results, the 404 page and the blog.
 
 Nothing is cached while the store has a design exception by User-Agent (System > Configuration > Design), since the CDN would hand one visitor's theme to everyone.
+
+## Upgrading from 0.3.0
+
+`composer update` picks up 0.3.1. The origin sends an `edgecache_state` cookie next to the session cookie (see The CDN must bypass on the same cookies), and renders a listed page without a session for a session cookie next to `edgecache_state=0`. Nothing changes at the edge until you change the CDN rule. Update the origin first, then the CDN. The other order is safe too, since no visitor has `edgecache_state=0` until the origin sends it, but the CDN then waits on the origin.
+
+Change them back in the opposite order: the CDN rule, then the origin. Once the CDN serves cached pages next to `edgecache_state=0`, an origin on 0.3.0 or without the module would no longer turn the cookie to `1` when a visitor adds to cart or logs in, and the edge would serve that visitor the anonymous page until their session cookie expires. Put the old CDN rule back first.
+
+A listed page that stores session data while it renders without a session isn't cached any more, and the refusal is logged to `var/log/edgecache.log`. The data is lost, as it was before, since no session keeps it.
 
 ## Upgrading from 0.2.x
 
@@ -53,7 +61,7 @@ System > Configuration > Advanced > Edge Cache.
 | `edgecache/general/enabled` | `0` | Turns the module on. Website and store view scope work too |
 | `edgecache/general/adapter` | `noop` | `noop`, `cloudflare` or `varnish` |
 | `edgecache/general/cacheable_actions` | home, CMS pages, categories, products, search, 404, blog | Full action names, one per line. These render without a session for a visitor who has none, and are cached |
-| `edgecache/general/bypass_cookies` | `store`, `user_allowed_save_cookie`, `maho_a11y_scan` | Cookie names, one per line. A request with any of them, or a session cookie, keeps its session and isn't cached |
+| `edgecache/general/bypass_cookies` | `store`, `user_allowed_save_cookie`, `maho_a11y_scan` | Cookie names, one per line. A request with any of them, a legacy session cookie, or a session cookie without `edgecache_state=0` keeps its session and isn't cached |
 | `edgecache/general/ttl` | `86400` | Edge TTL in seconds. Browsers always revalidate |
 | `edgecache/general/stale_while_revalidate` | `86400` | Seconds |
 | `edgecache/general/stale_if_error` | `604800` | Seconds |
@@ -89,14 +97,30 @@ For Varnish, start from the sample VCL in the design notes.
 
 ## The CDN must bypass on the same cookies
 
-The module only renders a page without a session for a request with none of these cookies. The CDN has to skip its cache for exactly the same set, or it will serve the shared page to a visitor the origin would have rendered differently (a logged-in customer, another store view, someone who declined cookies).
+The module renders a page without a session only for a request that has none of the cookies below. The CDN has to skip its cache for exactly the same requests, or it will serve the shared page to a visitor the origin would have rendered differently (a customer with a cart or a login, another store view, someone who declined cookies).
+
+On every storefront response that starts a session, the origin sends `edgecache_state` next to the session cookie, with the same path, domain, lifetime, Secure and SameSite:
+
+- `0` while the session stores nothing: no cart, login, message, currency or anything else
+- `1` once it stores something
+
+Any request that starts the session rewrites it: a POST, a page off the list, or a listed page without `edgecache_state=0`. A visitor gets a cart or logs in through a POST, so the cookie turns to `1` in the same response. While the module is off, a session that starts deletes the cookie.
 
 Bypass the cache when the request carries any of:
 
-- `maho_session`, `frontend`, `om_frontend` (the session cookies)
+- `maho_session` without `edgecache_state=0`
+- `frontend` or `om_frontend` (legacy session cookies, which the session migrates on start)
 - every name in `edgecache/general/bypass_cookies`
 
-In Cloudflare that's a condition on the Cache Rule (or a separate Bypass cache rule) on `http.cookie`. The sample VCL does it in `vcl_recv`. If you add a cookie to the list, add it at the CDN too.
+A session cookie with no state cookie, from a session older than 0.3.1 or a visitor who deleted the cookie, gets a session render, which sends the state cookie.
+
+In Cloudflare, make a Cache Rule with Bypass cache for this expression, ahead of the rule that makes the storefront eligible for cache:
+
+```text
+(http.cookie contains "maho_session=" and not (http.cookie contains "edgecache_state=0")) or http.cookie contains "frontend=" or http.cookie contains "store=" or http.cookie contains "user_allowed_save_cookie=" or http.cookie contains "maho_a11y_scan="
+```
+
+`http.cookie contains` works on every plan. It matches more names than it needs to (`frontend=` covers `om_frontend`), which only bypasses more. The origin only sends `0` and `1`. The sample VCL in the design notes does the same in `vcl_recv`. If you add a cookie to the list, add it at the CDN too.
 
 ## Adding a CDN
 

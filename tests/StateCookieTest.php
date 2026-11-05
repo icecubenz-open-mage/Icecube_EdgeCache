@@ -176,6 +176,20 @@ it('gives a session with a cart but no state cookie, from before the module sent
         ->and(stateCookieValue($page))->toBe('1');
 });
 
+it('gives a session with a cart sent with a forged 0 the shared page, which shows nothing of the cart', function (): void {
+    $jar = new StateCookieJar();
+    $jar->request('GET', '/edgecache/formkey/');
+    addToCart($jar);
+    $jar->cookies[Icecube_EdgeCache_Model_StateCookie::NAME] = Icecube_EdgeCache_Model_StateCookie::NO_STATE;
+
+    $page = $jar->request('GET', '/edgecache-category/');
+    $anonymous = HttpServer::request('GET', '/edgecache-category/');
+
+    expect(isEdgeCacheable($page))->toBeTrue()
+        ->and(minicartCount($page))->toBe(minicartCount($anonymous))
+        ->and(minicartCount($page))->not->toBe(1);
+});
+
 it('keeps 1 for a cart emptied again, whose quote the session still holds', function (): void {
     $jar = new StateCookieJar();
     $jar->request('GET', '/edgecache/formkey/');

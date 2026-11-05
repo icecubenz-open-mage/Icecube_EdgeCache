@@ -82,16 +82,16 @@ class Icecube_EdgeCache_Helper_Data extends Mage_Core_Helper_Abstract
     }
 
     /**
-     * Every cookie whose presence means the page may differ from the shared copy. The session
-     * cookies are always in it (legacy names too, since the session migrates them on start),
-     * so clearing the setting can't make sessions cacheable.
+     * Every cookie whose presence alone means the page may differ from the shared copy. The
+     * legacy session cookies are always in it, since the session migrates them on start, so
+     * clearing the setting can't make them cacheable. The session cookie itself isn't: a
+     * request with it counts only without edgecache_state=0 (see Policy).
      *
      * @return list<string>
      */
     public function getBypassCookies(): array
     {
         return array_values(array_unique([
-            Mage_Core_Controller_Front_Action::SESSION_NAMESPACE,
             ...Mage_Core_Controller_Front_Action::SESSION_LEGACY_NAMESPACES,
             ...$this->getList(self::XML_PATH_BYPASS_COOKIES),
         ]));

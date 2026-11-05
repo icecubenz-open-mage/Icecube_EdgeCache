@@ -6,7 +6,7 @@ SPDX-License-Identifier: OSL-3.0
 <config>
     <modules>
         <Icecube_EdgeCache>
-            <version>0.3.0</version>
+            <version>0.3.1</version>
         </Icecube_EdgeCache>
     </modules>
     <global>

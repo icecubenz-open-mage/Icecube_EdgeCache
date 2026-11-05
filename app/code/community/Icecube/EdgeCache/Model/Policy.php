@@ -158,7 +158,23 @@ class Icecube_EdgeCache_Model_Policy
         }
 
         return !$this->hasBypassCookie($action->getRequest())
+            && !$this->mayHoldSessionState($action->getRequest())
             && $helper->isCacheableAction($action->getFullActionName());
+    }
+
+    /**
+     * A session cookie counts unless the state cookie says the session holds nothing. A missing
+     * state cookie (a session from before the module sent one, or one the visitor deleted)
+     * starts the session, which sends it.
+     */
+    private function mayHoldSessionState(Mage_Core_Controller_Request_Http $request): bool
+    {
+        $sessionId = $request->getCookie(Mage_Core_Controller_Front_Action::SESSION_NAMESPACE);
+        if (!is_string($sessionId) || $sessionId === '') {
+            return false;
+        }
+
+        return $request->getCookie(Icecube_EdgeCache_Model_StateCookie::NAME) !== Icecube_EdgeCache_Model_StateCookie::NO_STATE;
     }
 
     private function hasBypassCookie(Mage_Core_Controller_Request_Http $request): bool
@@ -175,8 +191,13 @@ class Icecube_EdgeCache_Model_Policy
      */
     private function getRefusal(Mage_Core_Controller_Response_Http $response): ?string
     {
-        if (session_status() === PHP_SESSION_ACTIVE) {
+        // A lazy session isn't active until it stores something, so only the module's flag shows it
+        if (session_status() === PHP_SESSION_ACTIVE || Mage::getSingleton('edgecache/stateCookie')->wasSessionStarted()) {
             return 'a session was started';
+        }
+        // Data stored while there's no session is lost, and the page may show it
+        if (Icecube_EdgeCache_Model_SessionState::holdsState()) {
+            return 'it stored session data';
         }
         if ($this->hasCookie($response)) {
             return 'a cookie was set';

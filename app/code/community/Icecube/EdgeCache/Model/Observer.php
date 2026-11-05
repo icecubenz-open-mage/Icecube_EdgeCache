@@ -38,13 +38,26 @@ class Icecube_EdgeCache_Model_Observer
     }
 
     /**
+     * Fires each time a session starts, just before core sends the session cookie.
+     */
+    #[Maho\Config\Observer('session_before_renew_cookie', id: 'edgecache_watch_session_start')]
+    public function watchSessionStart(\Maho\Event\Observer $observer): void
+    {
+        if ($observer->getEvent()->getData('session_name') === Mage_Core_Controller_Front_Action::SESSION_NAMESPACE) {
+            Mage::getSingleton('edgecache/stateCookie')->markSessionStarted();
+        }
+    }
+
+    /**
      * After ContentNegotiation and every other controller_front_send_response_before observer.
+     * The state cookie goes first, so the policy sees it.
      */
     #[Maho\Config\Observer('http_response_send_before', id: 'edgecache_apply_policy')]
     public function applyPolicy(\Maho\Event\Observer $observer): void
     {
         $response = $observer->getEvent()->getData('response');
         if ($response instanceof Mage_Core_Controller_Response_Http) {
+            Mage::getSingleton('edgecache/stateCookie')->send();
             Mage::getSingleton('edgecache/policy')->applyToResponse($response);
         }
     }

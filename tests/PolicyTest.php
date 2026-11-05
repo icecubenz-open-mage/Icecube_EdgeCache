@@ -308,3 +308,104 @@ it('does not cache a page carrying a raw Set-Cookie header', function (): void {
 
     expect($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('no-store');
 });
+
+it('skips the session for a session cookie next to edgecache_state=0', function (?string $state, bool $skips): void {
+    $cookies = ['maho_session' => 'x'];
+    if ($state !== null) {
+        $cookies[Icecube_EdgeCache_Model_StateCookie::NAME] = $state;
+    }
+    $action = frontAction(cookies: $cookies);
+
+    sessionlessResponse(200, action: $action);
+
+    expect(skipsSession($action))->toBe($skips);
+})->with([
+    'no state' => ['0', true],
+    'holds state' => ['1', false],
+    'missing' => [null, false],
+    'empty' => ['', false],
+    'anything else' => ['00', false],
+]);
+
+it('keeps a session for a legacy session cookie next to edgecache_state=0', function (string $cookie): void {
+    $action = frontAction(cookies: [$cookie => 'x', 'maho_session' => 'x', Icecube_EdgeCache_Model_StateCookie::NAME => '0']);
+
+    sessionlessResponse(200, action: $action);
+
+    expect(skipsSession($action))->toBeFalse();
+})->with(['frontend', 'om_frontend']);
+
+it('does not cache a page carrying a Set-Cookie for a visitor whose session holds nothing', function (): void {
+    currentStore()->setConfig(Icecube_EdgeCache_Helper_Data::XML_PATH_ENABLED, '1');
+    $policy = Mage::getSingleton('edgecache/policy');
+    $action = frontAction(cookies: ['maho_session' => 'x', Icecube_EdgeCache_Model_StateCookie::NAME => '0']);
+    $policy->setAction($action);
+    $response = new Mage_Core_Controller_Response_Http();
+
+    $response->setHttpResponseCode(200)->setHeader('Content-Type', 'text/html', true)->setRawHeader('Set-Cookie: edgecache_state=1');
+    $policy->applyToResponse($response);
+
+    expect(skipsSession($action))->toBeTrue()
+        ->and($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('no-store');
+});
+
+it('does not cache a sessionless render once a session has started, even one that only lives in memory', function (): void {
+    Mage::getSingleton('edgecache/stateCookie')->markSessionStarted();
+
+    $response = sessionlessResponse(200);
+
+    expect($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('no-store');
+});
+
+it('does not cache a sessionless render that stored session data, which no session keeps', function (): void {
+    $previous = $_SESSION ?? null;
+    Mage::getSingleton('core/session')->addError('Shown on no page');
+
+    try {
+        $response = sessionlessResponse(200);
+    } finally {
+        $_SESSION = $previous ?? [];
+    }
+
+    expect($response->getSymfonyResponse()->headers->get('X-Edge-Cache-Control'))->toBe('no-store');
+});
+
+describe('the stopgap copy of core holdsState()', function (): void {
+    $keys = fn(): array => Icecube_EdgeCache_Model_SessionState::stopgapDisposableKeys();
+
+    it('finds no state in what an anonymous page view leaves', function () use ($keys): void {
+        $session = [
+            Mage_Core_Model_Session_Abstract::VALIDATOR_KEY => ['remote_addr' => '127.0.0.1'],
+            '_sf2_meta' => ['u' => 1],
+            'core' => ['messages' => new Mage_Core_Model_Message_Collection(), '_form_key' => 'abc', 'visitor_data' => ['visitor_id' => 2], 'last_url' => 'https://example.com/'],
+            'customer_base' => ['messages' => new Mage_Core_Model_Message_Collection(), 'id' => null, 'wishlist_item_count' => 0],
+            'catalog' => ['last_viewed_product_id' => 1, 'sort_order' => 'price'],
+            'checkout' => ['cart_was_updated' => true],
+            'reports' => ['product_index_viewed_count' => 3],
+        ];
+
+        expect(Icecube_EdgeCache_Model_SessionState::stopgapHoldsState($session, $keys()))->toBeFalse();
+    });
+
+    it('finds state in a cart, a login, a message, a currency or a key it does not know', function (array $session) use ($keys): void {
+        expect(Icecube_EdgeCache_Model_SessionState::stopgapHoldsState($session, $keys()))->toBeTrue();
+    })->with([
+        'cart' => [['checkout' => ['quote_id_1' => 7]]],
+        'login' => [['customer_base' => ['id' => 5]]],
+        'message' => [['core' => ['messages' => new Mage_Core_Model_Message_Collection()->add(new Mage_Core_Model_Message_Error('x'))]]],
+        'currency' => [['store_default' => ['currency_code' => 'EUR']]],
+        'url to return to' => [['customer_base' => ['before_auth_url' => 'https://example.com/']]],
+        'unknown key' => [['extension' => ['token' => 'abc']]],
+        'false' => [['customer_base' => ['remember_me' => false]]],
+    ]);
+
+    it('agrees with core where core has holdsState()', function () use ($keys): void {
+        $session = ['checkout' => ['cart_was_updated' => true], 'core' => ['_form_key' => 'a', 'currency_code' => 'EUR']];
+        if (!method_exists(Mage_Core_Model_Session_Abstract::class, 'holdsState')) {
+            $this->markTestSkipped('This Maho has no holdsState()');
+        }
+
+        expect(Icecube_EdgeCache_Model_SessionState::stopgapHoldsState($session, $keys()))
+            ->toBe(call_user_func(Mage_Core_Model_Session_Abstract::holdsState(...), $session, $keys()));
+    });
+});
